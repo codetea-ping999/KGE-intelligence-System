@@ -92,16 +92,29 @@ class IngestResult:
 
 
 class Engine:
-    def __init__(self, store: Store, ontology: Ontology) -> None:
+    def __init__(self, store: Store) -> None:
         self.store = store
-        self.ontology = ontology
-        self.validator = Validator(store, ontology)
-        self.reasoner = Reasoner(store, ontology)
+        self.refresh()
+
+    def refresh(self) -> None:
+        """Rebuild the ontology-dependent parts after the ontology in effect changed."""
+        self.validator = Validator(self.store, self.store.ontology)
+        self.reasoner = Reasoner(self.store, self.store.ontology)
+
+    @property
+    def ontology(self) -> Ontology:
+        return self.store.ontology
 
     @classmethod
-    def open(cls, db: str | Path, ontology_path: str | Path, clock: Clock | None = None) -> Engine:
+    def open(
+        cls,
+        db: str | Path,
+        ontology_path: str | Path,
+        clock: Clock | None = None,
+        allow_ontology_change: bool = False,
+    ) -> Engine:
         ontology = Ontology.load(ontology_path)
-        return cls(Store(db, ontology, clock), ontology)
+        return cls(Store(db, ontology, clock, allow_ontology_change))
 
     # ------------------------------------------------------------ ingestion
 

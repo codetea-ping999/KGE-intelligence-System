@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import json
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -229,6 +231,18 @@ class Ontology(BaseModel):
         """Predicates an extractor should state directly. An inverse property is left out:
         its canonical direction is extracted and the reasoner derives the other one."""
         return sorted(n for n, p in self.predicates.items() if p.inverse_of is None)
+
+    def canonical_json(self) -> str:
+        """Stable serialization: the same definitions always give the same text and hash."""
+        return json.dumps(
+            self.model_dump(mode="json", by_alias=True),
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+
+    def content_hash(self) -> str:
+        return hashlib.sha256(self.canonical_json().encode("utf-8")).hexdigest()
 
     @classmethod
     def load(cls, path: str | Path) -> Ontology:

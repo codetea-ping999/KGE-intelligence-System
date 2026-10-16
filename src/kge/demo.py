@@ -5,10 +5,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
+from kge import ontology_change
 from kge.clock import DEFAULT_FIXED_START, FixedClock
 from kge.extract import LLMExtractor, ReplayLLMClient, RuleExtractor
 from kge.models import Assertion, CandidateState
-from kge.pipeline import AUTO, Engine, IngestResult, accept_op
+from kge.ontology import Ontology
+from kge.pipeline import AUTO, Engine, IngestResult, ReviewError, accept_op
 from kge.qa import run as run_qa
 from kge.qa import show_term
 from kge.store import UnauthorizedCommit
@@ -108,7 +110,34 @@ def run(db: str = ":memory:", root: Path = ROOT, emit: Callable[[str], None] = p
     for a in d.added:
         emit("  + " + _fmt(e, a))
 
-    emit("\n== 9. 品質チェック")
+    emit(
+        "\n== 9. オントロジー v2 の影響分析と適用"
+        "（works_in_region を廃止し、located_in_region を追加）"
+    )
+    v2 = Ontology.load(root / "fixtures/ontology/base_v2.yaml")
+    p = ontology_change.plan(e, v2)
+    for change in p.changes:
+        emit(f"  {change}")
+    for f in p.stale_inferences:
+        stale = e.store.get_assertion(f.assertion_id)
+        assert stale is not None
+        emit(f"  取り消し予定: {_fmt(e, stale)}（{f.reason}）")
+    try:
+        ontology_change.apply(e, v2, AUTO, "自動適用の試み")
+        emit("  !! 人の承認なしに適用できてしまった（不具合）")
+    except ReviewError as exc:
+        emit(f"  自動適用は拒否されました: {exc}")
+    applied = ontology_change.apply(e, v2, "human:ontologist", "地域は組織単位で管理する")
+    emit(
+        f"  v{applied.version} を適用: 取り消し {len(applied.retracted)} 件、"
+        f"新たな推論 {len(applied.derived)} 件"
+    )
+    for aid in applied.derived:
+        new = e.store.get_assertion(aid)
+        assert new is not None
+        emit("  + " + _fmt(e, new))
+
+    emit("\n== 10. 品質チェック")
     qa = run_qa(e.store, DEFAULT_FIXED_START)
     for c in qa.checks:
         emit(f"  [{'OK' if c.ok else 'NG'}] {c.name} {c.detail}".rstrip())

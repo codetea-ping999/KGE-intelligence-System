@@ -58,7 +58,8 @@ def test_provenance_queries() -> None:
         initNs={"kgs": KGS, "prov": PROV, "rdf": RDF},
     )
     rows = list(inferences)
-    premises = {"R1_work_country": 2, "R2_work_region": 2, "AX_inverse_works_for_employs": 1}
+    premises = {"R1_work_country": 2, "R2_work_region": 2, "R3_org_region": 2}
+    premises["AX_inverse_works_for_employs"] = 1
     assert rows and all(int(r[2]) == premises[str(r[1]).rsplit("rule_", 1)[1]] for r in rows)
     llm = g.query(
         """SELECT ?s ?who WHERE { ?s prov:wasAttributedTo ?a ; kgs:approvedBy ?h .
