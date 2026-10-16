@@ -92,6 +92,7 @@ def test_cli_workflow(tmp_path, monkeypatch, capsys) -> None:  # type: ignore[no
         ["show", "A00003"],
         ["show", pending[0]],
         ["export"],
+        ["export", "--format", "turtle"],
         ["audit", "log"],
     ):
         assert main(["--db", db, *cmd]) == 0, cmd

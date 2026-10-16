@@ -1,12 +1,12 @@
 # All targets run offline once `make setup` has installed the locked dependencies.
 UV ?= uv
-RUN = $(UV) run --frozen
+RUN = $(UV) run --frozen --all-extras
 export KGE_CLOCK ?= system
 
 .PHONY: setup test lint typecheck check demo qa repro clean
 
 setup:
-	$(UV) sync --frozen
+	$(UV) sync --frozen --all-extras
 
 test:
 	$(RUN) pytest -q

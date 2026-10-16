@@ -128,6 +128,26 @@ class Engine:
         kind: SourceKind = SourceKind.DOCUMENT,
         actor: str = "system",
     ) -> IngestResult:
+        """All-or-nothing: if extraction or validation fails, the source version and every
+        candidate staged for it are rolled back, so a retry is not mistaken for 'unchanged'."""
+        try:
+            with self.store.transaction():
+                return self._ingest(uri, content, extractor, title, kind, actor)
+        except Exception as exc:
+            self.store.audit(
+                actor, "ingest_failed", {"uri": uri, "error": f"{type(exc).__name__}: {exc}"}
+            )
+            raise
+
+    def _ingest(
+        self,
+        uri: str,
+        content: str,
+        extractor: Extractor,
+        title: str | None,
+        kind: SourceKind,
+        actor: str,
+    ) -> IngestResult:
         src, changed, prev = self.store.register_source(uri, title or uri, kind, content, actor)
         result = IngestResult(source_id=src.id, version=src.version)
         if not changed:
