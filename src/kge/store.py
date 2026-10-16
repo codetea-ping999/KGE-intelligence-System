@@ -377,7 +377,7 @@ class Store:
                 {"entity_id": eid, "label": ref.label, "type": etype, "changeset": cs},
             )
             return eid
-        if etype not in e.types:
+        if not self.ontology.conforms(e.types, etype):
             for t in e.types:
                 if self.ontology.disjoint(t, etype):
                     raise UnauthorizedCommit(f"type {etype} is disjoint with {t} on {e.id}")

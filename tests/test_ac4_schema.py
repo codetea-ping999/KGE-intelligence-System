@@ -32,7 +32,7 @@ def _codes(engine, build):  # type: ignore[no-untyped-def]
             ),
             "SCHEMA_INTERVAL",
         ),
-        (lambda s: cand(s, "X", "works_for", "Y", o_type="Company"), "SCHEMA_UNKNOWN_TYPE"),
+        (lambda s: cand(s, "X", "works_for", "Y", o_type="Spaceship"), "SCHEMA_UNKNOWN_TYPE"),
         (lambda s: cand(s, "X", "works_for", "Y", quote=""), "EVIDENCE_MISSING"),
         (lambda s: cand(s, "X", "works_for", "Y", quote="書かれていない文"), "EVIDENCE_MISSING"),
     ],

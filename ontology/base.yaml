@@ -1,20 +1,29 @@
 # 最小オントロジー: 人・組織・国・地域
+# subclass_of でクラス階層を作れる（下位クラスは上位クラスの定義域・値域を満たし、排他関係も継承する）
 entity_types:
-  Person: {disjoint_with: [Organization, Country, Region]}
-  Organization: {disjoint_with: [Country, Region]}
-  Country: {disjoint_with: [Region]}
-  Region: {}
+  Person: {disjoint_with: [Organization, Country, Region], description: "人"}
+  Organization: {disjoint_with: [Country, Region], description: "組織"}
+  Company: {subclass_of: Organization, description: "企業"}
+  University: {subclass_of: Organization, disjoint_with: [Company], description: "大学"}
+  Country: {disjoint_with: [Region], description: "国"}
+  Region: {description: "地域"}
 
 predicates:
   works_for:
     {domain: Person, range: Organization, functional: true, temporal: true,
      description: "勤務先（同時期に1つ）"}
+  # inverse_of の述語は抽出対象にせず、推論器が逆向きを導く（根拠つきの推論として記録）
+  employs:
+    {domain: Organization, range: Person, temporal: true, inverse_of: works_for,
+     description: "雇用している人（works_for の逆）"}
   located_in: {domain: Organization, range: Country, functional: true, description: "所在国"}
   part_of: {domain: Country, range: Region, functional: true, description: "所属地域"}
   founded_in: {domain: Organization, range: "xsd:gYear", functional: true, description: "設立年"}
   works_in_country: {domain: Person, range: Country, temporal: true, description: "勤務国（推論）"}
   works_in_region: {domain: Person, range: Region, temporal: true, description: "勤務地域（推論）"}
 
+# 述語の特性（inverse_of / symmetric / transitive / subproperty_of）は
+# AX_ で始まる推論ルールに自動で変換される。下は手書きのルール。
 rules:
   - id: R1_work_country
     if: ["?p works_for ?o", "?o located_in ?c"]

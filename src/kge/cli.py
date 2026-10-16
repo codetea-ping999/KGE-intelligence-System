@@ -23,6 +23,7 @@ from kge.extract import (
 )
 from kge.llm_claude import LLMError
 from kge.models import Assertion, CandidateState
+from kge.ontology import Ontology
 from kge.pipeline import Engine, ReviewError
 from kge.store import UnauthorizedCommit
 from kge.versioning import diff
@@ -225,6 +226,44 @@ def cmd_export(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ontology(args: argparse.Namespace) -> int:
+    """Print the class hierarchy, predicates with their characteristics, and all rules."""
+    onto = Ontology.load(args.ontology)
+
+    def tree(parent: str | None, depth: int) -> None:
+        for name, t in sorted(onto.entity_types.items()):
+            if t.subclass_of == parent:
+                extra = f"  ⊥ {', '.join(t.disjoint_with)}" if t.disjoint_with else ""
+                print(f"  {'  ' * depth}{name}{extra}")
+                tree(name, depth + 1)
+
+    print("classes:")
+    tree(None, 0)
+    print("predicates:")
+    for name, pd in sorted(onto.predicates.items()):
+        traits = [
+            label
+            for label, on in [
+                ("functional", pd.functional),
+                (f"max {pd.max_cardinality}", pd.max_cardinality and not pd.functional),
+                ("temporal", pd.temporal),
+                ("symmetric", pd.symmetric),
+                ("transitive", pd.transitive),
+                (f"inverse of {pd.inverse_of}", pd.inverse_of),
+                (f"sub-property of {pd.subproperty_of}", pd.subproperty_of),
+            ]
+            if on
+        ]
+        print(
+            f"  {name}: {pd.domain} → {pd.range}" + (f"  [{', '.join(traits)}]" if traits else "")
+        )
+    print("rules:")
+    for r in onto.all_rules():
+        origin = f"axiom:{r.axiom}" if r.axiom else "hand-written"
+        print(f"  {r.id} ({origin}): {' , '.join(r.if_)} ⇒ {r.then}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="kge", description="Knowledge Graph Engineering PoC")
     p.add_argument("--db", default=os.environ.get("KGE_DB", "build/kge.db"))
@@ -298,6 +337,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("alias")
     s.add_argument("--reviewer", required=True)
     s.set_defaults(func=cmd_alias)
+
+    sub.add_parser(
+        "ontology", help="show the class hierarchy, predicates and compiled rules"
+    ).set_defaults(func=cmd_ontology)
 
     sub.add_parser("reason", help="run the reasoner to fixpoint").set_defaults(func=cmd_reason)
 

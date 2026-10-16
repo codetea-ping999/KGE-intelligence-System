@@ -144,6 +144,8 @@ class Validator:
         # -- duplicates and contradictions against committed knowledge
         duplicate_of: str | None = None
         conflicts: list[str] = []
+        limit = pdef.cardinality_limit
+        others: dict[str, list[str]] = {}  # distinct overlapping values -> assertion ids
         if subj_id is not None:
             for a in self.store.active(
                 subject=subj_id, predicate=cand.predicate, include_hypotheses=True, exclude=exclude
@@ -160,7 +162,9 @@ class Validator:
                             f"same statement already exists as {a.id}; evidence will be merged",
                             [a.id],
                         )
-                elif pdef.functional and overlap:
+                elif overlap and limit is not None:
+                    others.setdefault(a.object_value, []).append(a.id)
+                if pdef.functional and overlap and a.object_value != obj_key:
                     conflicts.append(a.id)
                     add(
                         "CONFLICT_FUNCTIONAL",
@@ -169,6 +173,16 @@ class Validator:
                         f" ({self._show(a)}) in an overlapping period",
                         [a.id],
                     )
+        if limit is not None and limit > 1 and duplicate_of is None and len(others) >= limit:
+            related = sorted(x for ids in others.values() for x in ids)
+            conflicts.extend(related)
+            add(
+                "CONFLICT_CARDINALITY",
+                Severity.CONFLICT,
+                f"{cand.predicate} allows at most {limit} values per subject;"
+                f" {len(others)} other values already hold in an overlapping period",
+                related,
+            )
         if pdef.functional:
             for other in batch:
                 if (
@@ -203,7 +217,7 @@ class Validator:
         if ref.type is not None:
             if ref.type not in self.ontology.entity_types:
                 add("SCHEMA_UNKNOWN_TYPE", Severity.ERROR, f"unknown entity type {ref.type}")
-            elif ref.type != implied:
+            elif not self.ontology.is_subtype(ref.type, implied):
                 kind = "SCHEMA_DOMAIN" if role == "subject" else "SCHEMA_RANGE"
                 add(kind, Severity.ERROR, f"{role} {ref.label!r} is {ref.type}, expected {implied}")
         existing = self.store.find_entity_by_label(ref.label)
@@ -219,12 +233,13 @@ class Validator:
                     [e.id for e in similar],
                 )
             return None
+        wanted = ref.type if ref.type in self.ontology.entity_types else implied
         for t in existing.types:
-            if t != implied and self.ontology.disjoint(t, implied):
+            if t != wanted and self.ontology.disjoint(t, wanted):
                 add(
                     "TYPE_DISJOINT",
                     Severity.ERROR,
-                    f"{existing.id}:{existing.label} is {t}, which is disjoint with {implied}",
+                    f"{existing.id}:{existing.label} is {t}, which is disjoint with {wanted}",
                     [existing.id],
                 )
         return existing.id
