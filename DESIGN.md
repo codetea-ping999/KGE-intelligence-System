@@ -215,6 +215,7 @@ kge-poc/
 | 6（任意） | 実LLMアダプタ（Claude API）、RDF/PROV-Oエクスポート、簡易Web閲覧 | 別途合意 |
 | 7a オントロジーの意味 | クラス階層、排他の継承、プロパティ特性のルール化、カーディナリティ、OWL 出力、`kge ontology` | `tests/test_ontology_semantics.py` |
 | 7b オントロジーの版管理 | オントロジーの変更を監査・差分・影響分析の対象にし、変更時に既存知識を再検証する | `tests/test_ontology_versioning.py` |
+| 8 実データ | 法人番号 CSV・Wikidata の取り込み、法人番号による実体の結びつけ、企業オントロジー | `tests/test_jp_companies.py` |
 
 フェーズ0〜5が最小構成のPoCで、各フェーズの終わりにテストが緑であることを確認してから次へ進む。
 
