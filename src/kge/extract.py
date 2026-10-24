@@ -30,7 +30,8 @@ class ExtractionResult:
 
 
 class Extractor(Protocol):
-    id: str
+    @property
+    def id(self) -> str: ...
 
     def extract(self, source: Source) -> ExtractionResult: ...
 
@@ -111,7 +112,10 @@ class RuleExtractor:
 
 
 class LLMClient(Protocol):
-    model: str
+    @property
+    def model(self) -> str:
+        """The model that produced the last answer."""
+        ...
 
     def complete(self, prompt: str) -> str: ...
 
@@ -127,10 +131,10 @@ def prompt_key(prompt: str) -> str:
 class ReplayLLMClient:
     """Returns recorded responses keyed by prompt hash. Keeps runs offline and reproducible."""
 
-    model = "replay"
-
     def __init__(self, fixtures_dir: str | Path) -> None:
         self.dir = Path(fixtures_dir)
+        #: the model named by the last replayed recording, so provenance matches the live run
+        self.model = "replay"
 
     def complete(self, prompt: str) -> str:
         key = prompt_key(prompt)
@@ -138,6 +142,7 @@ class ReplayLLMClient:
         if not path.exists():
             raise LLMReplayMissing(f"no recorded response for prompt {key} in {self.dir}")
         data = json.loads(path.read_text(encoding="utf-8"))
+        self.model = str(data.get("model") or "replay")
         return str(data["response"])
 
 
@@ -173,8 +178,12 @@ class LLMExtractor:
     def __init__(self, client: LLMClient, ontology: Ontology) -> None:
         self.client = client
         self.ontology = ontology
-        template_hash = hashlib.sha256(PROMPT_TEMPLATE.encode()).hexdigest()[:8]
-        self.id = f"llm:{client.model}@{template_hash}"
+        self.template_hash = hashlib.sha256(PROMPT_TEMPLATE.encode()).hexdigest()[:8]
+
+    @property
+    def id(self) -> str:
+        """Read after ``complete``: a replay client only learns the recorded model then."""
+        return f"llm:{self.client.model}@{self.template_hash}"
 
     def prompt(self, source: Source) -> str:
         preds = ", ".join(

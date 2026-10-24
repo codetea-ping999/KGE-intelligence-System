@@ -13,7 +13,7 @@ make qa         # 品質ゲート（不変条件・指標・golden 回帰）。�
 make repro      # デモを2回実行し、出力がバイト単位で一致することを確認
 ```
 
-`uv` がない場合は `pip install -r requirements.lock && pip install -e .` でも動きます（Python 3.12 以上）。
+`uv` がない場合は `pip install -r requirements.lock && pip install -e '.[claude]'` でも動きます（Python 3.12 以上）。
 Docker なら `docker build -t kge-poc . && docker run --rm kge-poc` でデモが流れます。
 
 ## 仕組み（要点）
@@ -54,6 +54,31 @@ uv run kge qa                          # 品質ゲート
 
 `KGE_CLOCK=fixed` を指定すると時計が固定され、実行結果が完全に再現されます。
 
+## RDF / PROV-O 形式での出力
+
+```bash
+uv run kge export --format turtle --out build/kge.ttl          # 取り消し済みの記述も含む全履歴
+uv run kge export --format turtle --active-only                # 確定中の知識だけ
+```
+
+各アサーションは `rdf:Statement` かつ `prov:Entity` として出力され、種別（`kgs:Fact` / `kgs:Inference` / `kgs:Hypothesis`）、信頼度、有効期間、出典（`prov:wasDerivedFrom` → 文書の版）、推論の前提とルール、抽出者（`prov:wasAttributedTo`）と承認者（`kgs:approvedBy`）、取り消し時刻（`prov:invalidatedAtTime`）を持ちます。
+確定済みの事実と推論だけは素のトリプル（例: `kge:E0002 kgo:located_in kge:E0007`）としても出力するので、通常の SPARQL では確定知識だけが見えます。
+IRI の基点は `--base` で変えられます。
+
+## 実 LLM（Claude API）での抽出
+
+```bash
+uv sync --extra claude                          # anthropic SDK を追加（make setup では導入済み）
+export ANTHROPIC_API_KEY=...                    # または `ant auth login` のプロファイル
+uv run kge ingest fixtures/docs/news_2026.txt --extractor llm --llm claude --record
+```
+
+- 既定のモデルは `claude-opus-5-5`、effort は `medium` です（`--model` と `--effort` で変更できます）。
+- 出力は JSON スキーマで構造を固定し（structured outputs）、安全性による拒否には API 側のフォールバック（`fallbacks: "default"`）を有効にしています。
+- 実 LLM の応答も、録画応答と同じく候補として隔離され、検証と人の承認を経ないと確定しません。
+- `--record` を付けると応答を `fixtures/llm/` に保存し、以後は `--llm replay`（既定）でネットワークなしに同じ結果を再現できます。
+- 呼び出しが失敗した場合（認証情報なし、通信エラー、拒否、出力の打ち切り）は、その取り込み全体を取り消し、`ingest_failed` を監査ログに残します。再実行すれば通常どおり処理されます。
+
 ## 受け入れ基準とテストの対応
 
 | AC | 内容 | テスト |
@@ -68,6 +93,7 @@ uv run kge qa                          # 品質ゲート
 | AC8 | 影響分析と連鎖取り消し | `tests/test_ac8_impact.py` |
 | AC9 | 監査ログと改ざん検知 | `tests/test_ac9_audit.py` |
 | AC10, AC11 | 再現性、品質ゲート、CLI 一連操作 | `tests/test_ac10_ac11_reproducibility_qa.py` |
+| フェーズ6 | RDF/PROV-O 出力、Claude API 接続と録画 | `tests/test_phase6_export.py`, `tests/test_phase6_claude_adapter.py` |
 
 ## 構成
 
@@ -82,14 +108,16 @@ src/kge/reason.py         前向き推論
 src/kge/versioning.py     差分・影響分析
 src/kge/audit.py          ハッシュ連鎖監査ログ
 src/kge/qa.py             品質指標・不変条件チェック・golden 回帰
+src/kge/export.py         RDF (Turtle) / PROV-O 出力
+src/kge/llm_claude.py     Claude API アダプタと応答の録画
 src/kge/demo.py, cli.py   参照シナリオと CLI
 fixtures/                 デモ文書（架空データ）、録画済み LLM 応答、golden スナップショット
 ```
 
 ## 既知の制約（PoC の範囲外）
 
-- 実 LLM（Claude API など）への接続は未実装です。`LLMClient` プロトコル（`complete(prompt) -> str`）を満たすクラスを追加すれば差し替えられます。
-  録画応答はプロンプトの SHA-256 先頭16桁をキーにしているため、プロンプトや文書を変えた場合は応答の再録画が必要です。
+- 録画応答はプロンプトの SHA-256 先頭16桁をキーにしているため、プロンプトや文書を変えた場合は応答の再録画（`--llm claude --record`）が必要です。
+- Claude API との接続は、テストでは偽のクライアントで要求の形と失敗時の動作を確認しています。実際の API 呼び出しは CI では行いません。
 - 実体の統合は別名の登録（`kge alias`）までで、実体IDの付け替えは行いません。
 - 同じ結論に複数の根拠がある場合、最初に見つかった根拠だけを記録します。その根拠が取り消されると、次の推論実行で別の根拠から再導出されます。
 - ルール抽出器は台帳形式の定型文だけに対応しています。
