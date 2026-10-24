@@ -20,7 +20,8 @@ class FixedClock:
     """Starts at a fixed instant and advances by `step` on every call."""
 
     def __init__(self, start: dt.datetime, step: dt.timedelta = dt.timedelta(seconds=1)) -> None:
-        self._t = start
+        # stored as UTC so that timestamps compare chronologically as text
+        self._t = (start if start.tzinfo else start.replace(tzinfo=dt.UTC)).astimezone(dt.UTC)
         self._step = step
 
     def now(self) -> dt.datetime:

@@ -182,6 +182,8 @@ class ValidationReport(_Model):
     effective_confidence: float
     duplicate_of: str | None = None
     conflicts_with: list[str] = []
+    #: hypotheses this verified fact replaces when accepted
+    supersedes: list[str] = []
 
     @property
     def max_severity(self) -> Severity | None:

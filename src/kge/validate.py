@@ -146,6 +146,7 @@ class Validator:
         # -- duplicates and contradictions against committed knowledge
         duplicate_of: str | None = None
         conflicts: list[str] = []
+        supersedes: list[str] = []
         limit = pdef.cardinality_limit
         # overlapping values for the cardinality check: (value label, from, to, assertion id)
         spans: list[tuple[str, dt.date | None, dt.date | None, str | None]] = []
@@ -157,7 +158,21 @@ class Validator:
                     a.valid_from, a.valid_to, cand.valid_from, cand.valid_to
                 )
                 if obj_key is not None and a.object_value == obj_key:
-                    if a.valid_from == cand.valid_from and a.valid_to == cand.valid_to:
+                    same_period = a.valid_from == cand.valid_from and a.valid_to == cand.valid_to
+                    if (
+                        same_period
+                        and a.epistemic_type is EpistemicType.HYPOTHESIS
+                        and effective_type is EpistemicType.FACT
+                    ):
+                        # merging evidence would leave a verified statement as a hypothesis
+                        supersedes.append(a.id)
+                        add(
+                            "PROMOTES_HYPOTHESIS",
+                            Severity.INFO,
+                            f"verified statement replaces hypothesis {a.id}",
+                            [a.id],
+                        )
+                    elif same_period:
                         duplicate_of = a.id
                         add(
                             "DUPLICATE_EXACT",
@@ -227,6 +242,7 @@ class Validator:
             effective_confidence=confidence,
             duplicate_of=duplicate_of,
             conflicts_with=conflicts,
+            supersedes=supersedes,
         )
 
     def _value(self, a: Assertion) -> str:
