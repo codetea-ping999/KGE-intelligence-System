@@ -14,9 +14,9 @@ from kge.models import (
     CandidateState,
     EpistemicType,
     Status,
-    intervals_overlap,
     is_human_actor,
     is_llm_actor,
+    max_concurrent,
 )
 from kge.store import Store
 
@@ -131,14 +131,10 @@ def checks(store: Store) -> list[Check]:
     for (_, pred), group in by_sp.items():
         limit = store.ontology.predicates[pred].cardinality_limit
         assert limit is not None
+        spans = [(y.object_value, y.valid_from, y.valid_to) for y in group]
         for x in group:
-            # distinct values (x's included) that hold at some point while x holds
-            values = {x.object_value} | {
-                y.object_value
-                for y in group
-                if intervals_overlap(x.valid_from, x.valid_to, y.valid_from, y.valid_to)
-            }
-            if len(values) > limit:
+            # distinct values holding together on some day while x holds
+            if max_concurrent(spans, (x.valid_from, x.valid_to)) > limit:
                 conflicts.append(x.id)
     out.append(Check("no_active_conflicts", not conflicts, ", ".join(conflicts)))
 

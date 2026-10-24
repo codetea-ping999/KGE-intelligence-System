@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from collections.abc import Sequence
 from typing import Protocol
 
@@ -17,6 +18,7 @@ from kge.models import (
     ValidationReport,
     intervals_overlap,
     is_llm_actor,
+    max_concurrent,
     normalize_text,
 )
 from kge.ontology import Ontology, literal_ok
@@ -145,7 +147,8 @@ class Validator:
         duplicate_of: str | None = None
         conflicts: list[str] = []
         limit = pdef.cardinality_limit
-        others: dict[str, list[str]] = {}  # distinct overlapping values -> assertion ids
+        # overlapping values for the cardinality check: (value label, from, to, assertion id)
+        spans: list[tuple[str, dt.date | None, dt.date | None, str | None]] = []
         if subj_id is not None:
             for a in self.store.active(
                 subject=subj_id, predicate=cand.predicate, include_hypotheses=True, exclude=exclude
@@ -163,7 +166,7 @@ class Validator:
                             [a.id],
                         )
                 elif overlap and limit is not None:
-                    others.setdefault(a.object_value, []).append(a.id)
+                    spans.append((self._value(a), a.valid_from, a.valid_to, a.id))
                 if pdef.functional and overlap and a.object_value != obj_key:
                     conflicts.append(a.id)
                     add(
@@ -173,16 +176,34 @@ class Validator:
                         f" ({self._show(a)}) in an overlapping period",
                         [a.id],
                     )
-        if limit is not None and limit > 1 and duplicate_of is None and len(others) >= limit:
-            related = sorted(x for ids in others.values() for x in ids)
-            conflicts.extend(related)
-            add(
-                "CONFLICT_CARDINALITY",
-                Severity.CONFLICT,
-                f"{cand.predicate} allows at most {limit} values per subject;"
-                f" {len(others)} other values already hold in an overlapping period",
-                related,
+        if limit is not None and not pdef.functional and duplicate_of is None:
+            # functional predicates are covered by the CONFLICT_FUNCTIONAL checks
+            value = cand.key()[2]
+            spans += [
+                (other.key()[2], other.valid_from, other.valid_to, None)
+                for other in batch
+                if other.subject.label == cand.subject.label
+                and other.predicate == cand.predicate
+                and other.key()[2] != value
+                and intervals_overlap(
+                    other.valid_from, other.valid_to, cand.valid_from, cand.valid_to
+                )
+            ]
+            held = max_concurrent(
+                [(v, f, t) for v, f, t, _ in spans if v != value]
+                + [(value, cand.valid_from, cand.valid_to)],
+                (cand.valid_from, cand.valid_to),
             )
+            if held > limit:
+                related = sorted({x for *_, x in spans if x is not None})
+                conflicts.extend(related)
+                add(
+                    "CONFLICT_CARDINALITY",
+                    Severity.CONFLICT,
+                    f"{cand.predicate} allows at most {limit} values per subject;"
+                    f" with this one {held} would hold at the same time",
+                    related,
+                )
         if pdef.functional:
             for other in batch:
                 if (
@@ -207,6 +228,10 @@ class Validator:
             duplicate_of=duplicate_of,
             conflicts_with=conflicts,
         )
+
+    def _value(self, a: Assertion) -> str:
+        """The object as a candidate would name it (entity label or literal value)."""
+        return self.store.label(a.object_value) if a.object_kind == "entity" else a.object_value
 
     def _show(self, a: Assertion) -> str:
         obj = self.store.label(a.object_value) if a.object_kind == "entity" else a.object_value

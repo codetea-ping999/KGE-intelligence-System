@@ -115,7 +115,12 @@ def test_general_type_does_not_overwrite_specific_one(engine) -> None:  # type: 
         (
             "entity_types: {A: {}, B: {}}\npredicates:\n"
             "  p: {domain: A, range: B}\n  q: {domain: A, range: B, inverse_of: p}",
-            "mirror",
+            "cover the range/domain",
+        ),
+        (  # q is derived from every p, so q's domain cannot be narrower than p's range
+            "entity_types: {P: {}, A: {}, B: {subclass_of: A}}\npredicates:\n"
+            "  p: {domain: P, range: A}\n  q: {domain: B, range: P, inverse_of: p}",
+            "cover the range/domain",
         ),
         (
             "entity_types: {A: {}, B: {}}\npredicates:\n  p: {domain: A, range: B, symmetric: true}",
@@ -235,6 +240,49 @@ def test_max_cardinality(tmp_path: Path) -> None:
     assert "CONFLICT_CARDINALITY" not in sc.report.codes()
 
 
+def test_cardinality_counts_values_holding_at_the_same_time(tmp_path: Path) -> None:
+    e = _engine(tmp_path, AXIOMS)
+
+    def speaks(lang: str, vf: str, vt: str):  # type: ignore[no-untyped-def]
+        return lambda s: [
+            cand(s, "鈴木", "speaks", lang, datatype="xsd:string", valid_from=vf, valid_to=vt)
+        ]
+
+    ingest_specs(e, "a", "a", speaks("ja", "2024-01-01", "2024-01-31"))
+    ingest_specs(e, "b", "b", speaks("en", "2024-02-01", "2024-02-29"))
+    # spans both months, but only two values ever hold on the same day
+    r = ingest_specs(e, "c", "c", speaks("de", "2024-01-01", "2024-02-29"))
+    assert len(r.accepted) == 1 and r.pending == []
+    assert all(c.ok for c in checks(e.store))
+    r = ingest_specs(e, "d", "d", speaks("fr", "2024-01-15", "2024-01-20"))  # ja + de + fr
+    [sc] = [e.store.get_candidate(c) for c in r.staged]
+    assert "CONFLICT_CARDINALITY" in sc.report.codes()
+
+
+def test_cardinality_counts_earlier_candidates_of_the_same_batch(tmp_path: Path) -> None:
+    e = _engine(tmp_path, AXIOMS)
+    r = ingest_specs(
+        e,
+        "a",
+        "a",
+        lambda s: [
+            cand(s, "鈴木", "speaks", lang, datatype="xsd:string") for lang in ("ja", "en", "de")
+        ],
+    )
+    assert len(r.accepted) == 2 and len(r.pending) == 1
+    assert all(c.ok for c in checks(e.store))
+
+
+def test_max_cardinality_one_without_functional(tmp_path: Path) -> None:
+    e = _engine(tmp_path, AXIOMS.replace("max_cardinality: 2", "max_cardinality: 1"))
+    ingest_specs(e, "a", "a", lambda s: [cand(s, "鈴木", "speaks", "ja", datatype="xsd:string")])
+    r = ingest_specs(
+        e, "b", "b", lambda s: [cand(s, "鈴木", "speaks", "en", datatype="xsd:string")]
+    )
+    [sc] = [e.store.get_candidate(c) for c in r.staged]
+    assert "CONFLICT_CARDINALITY" in sc.report.codes() and sc.state.value == "pending"
+
+
 # ------------------------------------------------------------------ extraction and export
 
 
@@ -251,6 +299,15 @@ def test_llm_prompt_lists_only_canonical_direction(engine) -> None:  # type: ign
     )
     prompt = llm(engine).prompt(src)
     assert "works_for(Person→Organization)" in prompt and "employs" not in prompt
+
+
+def test_reciprocal_inverses_keep_one_direction_for_extraction() -> None:
+    onto = _load(
+        "entity_types: {P: {}, O: {}}\npredicates:\n"
+        "  works_for: {domain: P, range: O, inverse_of: employs}\n"
+        "  employs: {domain: O, range: P, inverse_of: works_for}"
+    )
+    assert onto.extractable_predicates() == ["employs"]
 
 
 def test_ontology_exported_as_owl() -> None:
