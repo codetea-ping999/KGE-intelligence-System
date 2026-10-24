@@ -22,14 +22,18 @@ RESPONSE = json.loads(
 
 
 class FakeMessages:
-    def __init__(self, stop_reason: str = "end_turn", text: str | None = None) -> None:
+    def __init__(
+        self, stop_reason: str = "end_turn", text: str | None = None, model: str | None = None
+    ) -> None:
         self.calls: list[dict] = []  # type: ignore[type-arg]
         self.stop_reason = stop_reason
+        self.model = model
         self.text = text if text is not None else json.dumps(RESPONSE, ensure_ascii=False)
 
     def create(self, **kwargs):  # type: ignore[no-untyped-def]
         self.calls.append(kwargs)
         return SimpleNamespace(
+            model=self.model,
             stop_reason=self.stop_reason,
             stop_details=None,
             content=[SimpleNamespace(type="thinking", thinking=""),
@@ -113,3 +117,17 @@ def test_failed_live_call_rolls_back_the_ingest(engine) -> None:  # type: ignore
     working, _ = fake_client()
     r = engine.ingest("news", doc("news_2026.txt"), LLMExtractor(working, engine.ontology))
     assert not r.skipped and r.staged
+
+
+def test_fallback_answer_is_attributed_to_the_serving_model(engine, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    bootstrap(engine)
+    live, messages = fake_client(model="claude-sonnet-5-5")  # the fallback model answered
+    extractor = LLMExtractor(RecordingLLMClient(live, tmp_path), engine.ontology)
+    src, _, _ = engine.store.register_source(
+        "news", "news", SourceKind.DOCUMENT, doc("news_2026.txt")
+    )
+    result = extractor.extract(src)
+    assert messages.calls[0]["model"] == "claude-opus-5-5"  # what was asked for
+    assert {c.extracted_by.split("@")[0] for c in result.candidates} == {"llm:claude-sonnet-5-5"}
+    saved = json.loads((tmp_path / f"{prompt_key(extractor.prompt(src))}.json").read_text("utf-8"))
+    assert saved["model"] == "claude-sonnet-5-5"

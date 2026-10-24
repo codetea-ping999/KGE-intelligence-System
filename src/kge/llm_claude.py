@@ -89,6 +89,8 @@ class ClaudeLLMClient:
                 ) from exc
             client = anthropic.Anthropic()
         self._client = client
+        self.requested_model = model
+        #: the model that produced the last answer (the requested one until a call is made)
         self.model = model
         self.effort = effort
         self.max_tokens = max_tokens
@@ -108,13 +110,15 @@ class ClaudeLLMClient:
         texts = [b.text for b in response.content if b.type == "text"]
         if not texts:
             raise LLMRefused("response contained no text block")
+        # after a server-side fallback another model answered: provenance names that one
+        self.model = str(getattr(response, "model", None) or self.requested_model)
         return str(texts[0])
 
     def _create(self, prompt: str) -> Any:
         # Server-side fallback reroutes a safety decline to another model inside the
         # same call; a decline of the whole chain still surfaces as stop_reason "refusal".
         return self._client.beta.messages.create(
-            model=self.model,
+            model=self.requested_model,
             max_tokens=self.max_tokens,
             betas=["server-side-fallback-2026-07-01"],
             fallbacks="default",
@@ -132,7 +136,11 @@ class RecordingLLMClient:
     def __init__(self, inner: LLMClient, fixtures_dir: str | Path) -> None:
         self.inner = inner
         self.dir = Path(fixtures_dir)
-        self.model = inner.model  # provenance names the model that actually answered
+
+    @property
+    def model(self) -> str:
+        """The model that actually answered the last call (it can change on fallback)."""
+        return self.inner.model
 
     def complete(self, prompt: str) -> str:
         response = self.inner.complete(prompt)
