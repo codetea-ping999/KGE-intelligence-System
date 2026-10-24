@@ -30,6 +30,7 @@ from kge.models import (
     Evidence,
     Justification,
     LiteralValue,
+    Severity,
     Source,
     SourceKind,
     StagedCandidate,
@@ -776,6 +777,10 @@ class Store:
             raise UnauthorizedCommit(f"candidate {cid} has not been validated")
         if sc.report.has_errors:
             raise UnauthorizedCommit(f"candidate {cid} has validation errors")
+        if any(i.severity is Severity.CONFLICT for i in sc.report.issues):
+            raise UnauthorizedCommit(
+                f"candidate {cid} conflicts with existing knowledge; revalidate after resolving"
+            )
         if sc.candidate.extracted_by != extracted_by:
             raise UnauthorizedCommit(f"candidate {cid}: extractor mismatch")
         if is_llm_actor(extracted_by) and not is_human_actor(approved_by):
