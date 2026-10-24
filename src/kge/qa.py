@@ -14,9 +14,9 @@ from kge.models import (
     CandidateState,
     EpistemicType,
     Status,
-    intervals_overlap,
     is_human_actor,
     is_llm_actor,
+    max_concurrent,
 )
 from kge.ontology import Ontology, literal_ok
 from kge.store import Store
@@ -120,14 +120,10 @@ def cardinality_violations(onto: Ontology, active: list[Assertion]) -> list[str]
     for (_, pred), group in by_sp.items():
         limit = onto.predicates[pred].cardinality_limit
         assert limit is not None
+        spans = [(y.object_value, y.valid_from, y.valid_to) for y in group]
         for x in group:
-            # distinct values (x's included) that hold at some point while x holds
-            values = {x.object_value} | {
-                y.object_value
-                for y in group
-                if intervals_overlap(x.valid_from, x.valid_to, y.valid_from, y.valid_to)
-            }
-            if len(values) > limit:
+            # distinct values holding together on some day while x holds
+            if max_concurrent(spans, (x.valid_from, x.valid_to)) > limit:
                 out.append(x.id)
     return out
 

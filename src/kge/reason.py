@@ -62,6 +62,10 @@ class Reasoner:
                 if window is None:
                     continue
                 subj, obj = binding.get(ts, ts), binding.get(to, to)
+                if not self._fits(subj, pdef.domain) or (
+                    not pdef.literal_range and not self._fits(obj, pdef.range)
+                ):
+                    continue  # the ontology does not allow this conclusion for these entities
                 vf, vt = window
                 key = (subj, tp, obj, str(vf), str(vt))
                 if key in planned or self._known(subj, tp, obj, vf, vt):
@@ -90,6 +94,10 @@ class Reasoner:
                     )
                 )
         return ops
+
+    def _fits(self, entity_id: str, expected: str) -> bool:
+        e = self.store.get_entity(entity_id)
+        return e is not None and self.ontology.conforms(e.types, expected)
 
     def _known(self, s: str, p: str, o: str, vf: object, vt: object) -> bool:
         return any(

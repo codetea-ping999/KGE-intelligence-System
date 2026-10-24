@@ -270,3 +270,55 @@ def test_failed_apply_rolls_back(engine, monkeypatch) -> None:  # type: ignore[n
     assert len(engine.store.ontology_versions()) == 1 and engine.store.head() == head
     assert "works_in_region" in engine.store.ontology.predicates
     assert all(c.ok for c in checks(engine.store))
+
+
+def test_reordered_rules_are_the_same_ontology(tmp_path: Path) -> None:
+    data = yaml.safe_load(BASE.read_text("utf-8"))
+    data["rules"].reverse()
+    path = tmp_path / "o.yaml"
+    path.write_text(yaml.safe_dump(data, allow_unicode=True), "utf-8")
+    assert Ontology.load(path).content_hash() == Ontology.load(BASE).content_hash()
+    db = tmp_path / "kge.db"
+    Engine.open(db, BASE, FixedClock(DEFAULT_FIXED_START)).store.close()
+    Engine.open(db, path, FixedClock(DEFAULT_FIXED_START)).store.close()  # no mismatch
+
+
+def test_failed_apply_keeps_the_change_pending(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    db = tmp_path / "kge.db"
+    e = Engine.open(db, BASE, FixedClock(DEFAULT_FIXED_START))
+    bootstrap(e)
+    e.store.close()
+    e = Engine.open(db, V2, FixedClock(DEFAULT_FIXED_START), allow_ontology_change=True)
+    monkeypatch.setattr(e, "refresh", lambda: None)
+    monkeypatch.setattr(e.reasoner, "run", lambda: (_ for _ in ()).throw(RuntimeError("x")))
+    with pytest.raises(RuntimeError):
+        ontology_change.apply(e, e.store.pending_ontology, "human:o", "移行")  # type: ignore[arg-type]
+    assert e.store.pending_ontology is not None
+    assert not next(c for c in checks(e.store) if c.name == "ontology_versioned").ok
+
+
+def test_rederived_inferences_respect_the_new_schema(engine) -> None:  # type: ignore[no-untyped-def]
+    bootstrap(engine)
+    assert engine.store.active(predicate="works_in_country")
+
+    def narrow(d):  # type: ignore[no-untyped-def]
+        d["predicates"]["works_in_country"]["domain"] = "Company"
+
+    new = _variant(narrow)
+    ontology_change.apply(engine, new, "human:o", "企業のみ", retract_invalid=True)
+    assert engine.store.active(predicate="works_in_country") == []  # not derived again
+    assert all(c.ok for c in checks(engine.store))
+
+
+def test_apply_plans_under_the_write_lock(engine, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    bootstrap(engine)
+    seen: list[bool] = []
+    real = ontology_change.plan
+
+    def spy(e, new):  # type: ignore[no-untyped-def]
+        seen.append(e.store._in_tx)
+        return real(e, new)
+
+    monkeypatch.setattr(ontology_change, "plan", spy)
+    ontology_change.apply(engine, Ontology.load(V2), "human:o", "移行")
+    assert seen == [True]

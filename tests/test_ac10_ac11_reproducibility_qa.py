@@ -2,6 +2,7 @@
 
 import json
 import shutil
+from pathlib import Path
 
 from conftest import ROOT
 from kge import demo, qa
@@ -98,3 +99,6 @@ def test_cli_workflow(tmp_path, monkeypatch, capsys) -> None:  # type: ignore[no
         assert main(["--db", db, *cmd]) == 0, cmd
     assert main(["--db", db, "audit", "verify"]) == 0
     assert main(["--db", db, "qa"]) == 0
+    snap = Path(db).with_name("snapshot.json")
+    assert main(["--db", db, "export", "--out", str(snap)]) == 0
+    assert json.loads(snap.read_text("utf-8"))  # written to the file, not stdout

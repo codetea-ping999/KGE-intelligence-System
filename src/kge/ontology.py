@@ -114,11 +114,14 @@ class Ontology(BaseModel):
                     )
             if p.inverse_of is not None:
                 inv = preds[p.inverse_of]
+                # the axiom derives `?y name ?x` from every `?x inverse_of ?y`, so whatever
+                # the inverse may relate has to fit this predicate's domain and range
                 if inv.literal_range or not (
-                    self.is_subtype(p.domain, inv.range) and self.is_subtype(p.range, inv.domain)
+                    self.is_subtype(inv.range, p.domain) and self.is_subtype(inv.domain, p.range)
                 ):
                     raise ValueError(
-                        f"predicate {name}: domain/range must mirror those of {p.inverse_of}"
+                        f"predicate {name}: domain/range must cover the range/domain of "
+                        f"{p.inverse_of}"
                     )
                 if inv.inverse_of not in (None, name):
                     raise ValueError(
@@ -229,13 +232,25 @@ class Ontology(BaseModel):
 
     def extractable_predicates(self) -> list[str]:
         """Predicates an extractor should state directly. An inverse property is left out:
-        its canonical direction is extracted and the reasoner derives the other one."""
-        return sorted(n for n, p in self.predicates.items() if p.inverse_of is None)
+        its canonical direction is extracted and the reasoner derives the other one. Of a
+        pair declared inverse of each other, the alphabetically first one is canonical."""
+
+        def derived(name: str, p: PredicateDef) -> bool:
+            inv = p.inverse_of
+            if inv is None:
+                return False
+            return self.predicates[inv].inverse_of != name or inv < name
+
+        return sorted(n for n, p in self.predicates.items() if not derived(n, p))
 
     def canonical_json(self) -> str:
-        """Stable serialization: the same definitions always give the same text and hash."""
+        """Stable serialization: the same definitions always give the same text and hash.
+        Rules are keyed by id (as the structural diff sees them), so reordering them in the
+        file changes nothing."""
+        data = self.model_dump(mode="json", by_alias=True)
+        data["rules"] = sorted(data["rules"], key=lambda r: r["id"])
         return json.dumps(
-            self.model_dump(mode="json", by_alias=True),
+            data,
             sort_keys=True,
             ensure_ascii=False,
             separators=(",", ":"),
