@@ -1,0 +1,299 @@
+{
+ "head": {
+  "vars": [
+   "item",
+   "itemLabel",
+   "corp",
+   "prop",
+   "stmt",
+   "value",
+   "valueLabel",
+   "valueCorp",
+   "valuePref",
+   "valuePrefLabel",
+   "start",
+   "end"
+  ]
+ },
+ "results": {
+  "bindings": [
+   {
+    "item": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/QTEST1"
+    },
+    "itemLabel": {
+     "type": "literal",
+     "value": "架空HD",
+     "xml:lang": "ja"
+    },
+    "corp": {
+     "type": "literal",
+     "value": "9000000000001"
+    },
+    "prop": {
+     "type": "literal",
+     "value": "P1448"
+    },
+    "stmt": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/statement/QTEST1-a"
+    },
+    "value": {
+     "type": "literal",
+     "value": "架空ホールディングス株式会社",
+     "xml:lang": "ja"
+    }
+   },
+   {
+    "item": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/QTEST1"
+    },
+    "itemLabel": {
+     "type": "literal",
+     "value": "架空HD",
+     "xml:lang": "ja"
+    },
+    "corp": {
+     "type": "literal",
+     "value": "9000000000001"
+    },
+    "prop": {
+     "type": "literal",
+     "value": "P1448"
+    },
+    "stmt": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/statement/QTEST1-b"
+    },
+    "value": {
+     "type": "literal",
+     "value": "Kaku Holdings",
+     "xml:lang": "en"
+    }
+   },
+   {
+    "item": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/QTEST1"
+    },
+    "itemLabel": {
+     "type": "literal",
+     "value": "架空HD",
+     "xml:lang": "ja"
+    },
+    "corp": {
+     "type": "literal",
+     "value": "9000000000001"
+    },
+    "prop": {
+     "type": "literal",
+     "value": "P159"
+    },
+    "stmt": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/statement/QTEST1-c"
+    },
+    "value": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/QCHIYODA"
+    },
+    "valueLabel": {
+     "type": "literal",
+     "value": "千代田区",
+     "xml:lang": "ja"
+    },
+    "valuePref": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/QPREF13"
+    },
+    "valuePrefLabel": {
+     "type": "literal",
+     "value": "東京都",
+     "xml:lang": "ja"
+    }
+   },
+   {
+    "item": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/QTEST1"
+    },
+    "itemLabel": {
+     "type": "literal",
+     "value": "架空HD",
+     "xml:lang": "ja"
+    },
+    "corp": {
+     "type": "literal",
+     "value": "9000000000001"
+    },
+    "prop": {
+     "type": "literal",
+     "value": "P169"
+    },
+    "stmt": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/statement/QTEST1-d"
+    },
+    "value": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/QPERSON1"
+    },
+    "valueLabel": {
+     "type": "literal",
+     "value": "山田架空",
+     "xml:lang": "ja"
+    },
+    "start": {
+     "type": "literal",
+     "value": "2019-06-01T00:00:00Z",
+     "datatype": "http://www.w3.org/2001/XMLSchema#dateTime"
+    }
+   },
+   {
+    "item": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/QTEST1"
+    },
+    "itemLabel": {
+     "type": "literal",
+     "value": "架空HD",
+     "xml:lang": "ja"
+    },
+    "corp": {
+     "type": "literal",
+     "value": "9000000000001"
+    },
+    "prop": {
+     "type": "literal",
+     "value": "P169"
+    },
+    "stmt": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/statement/QTEST1-e"
+    },
+    "value": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/QPERSON2"
+    },
+    "valueLabel": {
+     "type": "literal",
+     "value": "鈴木試験",
+     "xml:lang": "ja"
+    },
+    "start": {
+     "type": "literal",
+     "value": "2012-06-01T00:00:00Z",
+     "datatype": "http://www.w3.org/2001/XMLSchema#dateTime"
+    },
+    "end": {
+     "type": "literal",
+     "value": "2019-05-31T00:00:00Z",
+     "datatype": "http://www.w3.org/2001/XMLSchema#dateTime"
+    }
+   },
+   {
+    "item": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/QTEST1"
+    },
+    "itemLabel": {
+     "type": "literal",
+     "value": "架空HD",
+     "xml:lang": "ja"
+    },
+    "corp": {
+     "type": "literal",
+     "value": "9000000000001"
+    },
+    "prop": {
+     "type": "literal",
+     "value": "P571"
+    },
+    "stmt": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/statement/QTEST1-f"
+    },
+    "value": {
+     "type": "literal",
+     "value": "1950-00-00T00:00:00Z",
+     "datatype": "http://www.w3.org/2001/XMLSchema#dateTime"
+    }
+   },
+   {
+    "item": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/QTEST2"
+    },
+    "itemLabel": {
+     "type": "literal",
+     "value": "架空部品",
+     "xml:lang": "ja"
+    },
+    "corp": {
+     "type": "literal",
+     "value": "9000000000002"
+    },
+    "prop": {
+     "type": "literal",
+     "value": "P749"
+    },
+    "stmt": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/statement/QTEST2-a"
+    },
+    "value": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/QTEST1"
+    },
+    "valueLabel": {
+     "type": "literal",
+     "value": "架空HD",
+     "xml:lang": "ja"
+    },
+    "valueCorp": {
+     "type": "literal",
+     "value": "9000000000001"
+    },
+    "start": {
+     "type": "literal",
+     "value": "2018-04-01T00:00:00Z",
+     "datatype": "http://www.w3.org/2001/XMLSchema#dateTime"
+    }
+   },
+   {
+    "item": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/QTEST2"
+    },
+    "itemLabel": {
+     "type": "literal",
+     "value": "架空部品",
+     "xml:lang": "ja"
+    },
+    "corp": {
+     "type": "literal",
+     "value": "9000000000002"
+    },
+    "prop": {
+     "type": "literal",
+     "value": "P159"
+    },
+    "stmt": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/statement/QTEST2-b"
+    },
+    "value": {
+     "type": "uri",
+     "value": "http://www.wikidata.org/entity/QOVERSEAS"
+    },
+    "valueLabel": {
+     "type": "literal",
+     "value": "Springfield",
+     "xml:lang": "ja"
+    }
+   }
+  ]
+ }
+}

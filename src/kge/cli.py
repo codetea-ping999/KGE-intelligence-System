@@ -23,7 +23,7 @@ from kge.extract import (
     RuleExtractor,
 )
 from kge.llm_claude import LLMError
-from kge.models import Assertion, CandidateState
+from kge.models import Assertion, CandidateState, SourceKind
 from kge.ontology import Ontology
 from kge.pipeline import Engine, ReviewError
 from kge.store import OntologyMismatch, UnauthorizedCommit
@@ -62,6 +62,49 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     path = Path(args.path)
     r = e.ingest(args.uri or path.as_posix(), path.read_text(encoding="utf-8"), extractor)
     print(demo._summary(r))
+    return 0
+
+
+IMPORTERS = {
+    # name: (extractor id, source prior, title)
+    "wikidata": ("import:wikidata", 0.9, "Wikidata (CC0)"),
+    "houjin": ("import:houjin-bangou", 0.98, "国税庁法人番号公表サイト"),
+}
+
+
+def cmd_import(args: argparse.Namespace) -> int:
+    """Convert a dataset file to the canonical form and ingest it like any other source."""
+    from kge.datasets import DatasetExtractor
+    from kge.sources import houjin, wikidata
+
+    e = _engine(args)
+    path = Path(args.path)
+    raw = path.read_text(encoding="utf-8-sig")
+    try:
+        content = wikidata.convert(raw) if args.dataset == "wikidata" else houjin.convert(raw)
+    except houjin.MalformedCSV as exc:
+        print(f"error: nothing imported, {path} has unreadable rows: {exc}", file=sys.stderr)
+        return 2
+    ident, prior, title = IMPORTERS[args.dataset]
+    if args.canonical_out:
+        Path(args.canonical_out).write_text(content, encoding="utf-8")
+    extractor = DatasetExtractor(e.ontology, e.store, ident, prior)
+    uri = args.uri or f"{args.dataset}:{path.name}"
+    r = e.ingest(uri, content, extractor, title=title, kind=SourceKind.DATASET)
+    print(demo._summary(r))
+    return 0
+
+
+def cmd_fetch(args: argparse.Namespace) -> int:
+    """Download Wikidata statements for companies given by corporate number."""
+    from kge.sources import wikidata
+
+    numbers = list(args.corporate_number)
+    if args.from_db:
+        e = _engine(args)
+        numbers += [a.object_value for a in e.store.active(predicate="corporate_number")]
+    Path(args.out).write_text(wikidata.fetch(numbers), encoding="utf-8")
+    print(f"wrote {args.out}")
     return 0
 
 
@@ -340,6 +383,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ontology", default=os.environ.get("KGE_ONTOLOGY", "ontology/base.yaml"))
     sub = p.add_subparsers(dest="command", required=True)
 
+    s = sub.add_parser("import", help="ingest a structured dataset (Wikidata JSON, 法人番号 CSV)")
+    s.add_argument("dataset", choices=sorted(IMPORTERS))
+    s.add_argument("path")
+    s.add_argument("--uri", help="source identity for incremental re-imports")
+    s.add_argument("--canonical-out", help="also write the canonical statements to this file")
+    s.set_defaults(func=cmd_import)
+
+    s = sub.add_parser("fetch", help="download Wikidata statements (needs network access)")
+    s.add_argument("dataset", choices=["wikidata"])
+    s.add_argument("--corporate-number", action="append", default=[])
+    s.add_argument("--from-db", action="store_true", help="every corporate number in the db")
+    s.add_argument("--out", required=True)
+    s.set_defaults(func=cmd_fetch)
+
     s = sub.add_parser("ingest", help="extract candidates from a document and validate them")
     s.add_argument("path")
     s.add_argument("--extractor", choices=["rule", "llm"], default="rule")
@@ -466,6 +523,7 @@ def main(argv: list[str] | None = None) -> int:
         ExtractionFailed,
         LLMReplayMissing,
         LLMError,
+        OSError,  # unreadable files, unreachable endpoints
     ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
