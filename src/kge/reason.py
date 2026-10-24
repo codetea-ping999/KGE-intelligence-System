@@ -4,9 +4,16 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-from kge.models import Assertion, EpistemicType, Justification, LiteralValue, interval_intersection
+from kge.models import (
+    Assertion,
+    EpistemicType,
+    Justification,
+    LiteralValue,
+    Status,
+    interval_intersection,
+)
 from kge.ontology import Ontology, RuleDef, parse_pattern
-from kge.store import AddAssertion, CommitResult, EntityIdRef, Store
+from kge.store import AddAssertion, CommitResult, EntityIdRef, Op, Retract, Store
 
 REASONER = "reasoner"
 APPROVER = "policy:reasoner"
@@ -99,18 +106,40 @@ class Reasoner:
         e = self.store.get_entity(entity_id)
         return e is not None and self.ontology.conforms(e.types, expected)
 
+    def _same(self, s: str, p: str, o: str, vf: object, vt: object, hyp: bool) -> list[Assertion]:
+        return [
+            a
+            for a in self.store.active(subject=s, predicate=p, include_hypotheses=hyp)
+            if a.object_value == o and a.valid_from == vf and a.valid_to == vt
+        ]
+
     def _known(self, s: str, p: str, o: str, vf: object, vt: object) -> bool:
-        return any(
-            a.object_value == o and a.valid_from == vf and a.valid_to == vt
-            for a in self.store.active(subject=s, predicate=p, include_hypotheses=True)
-        )
+        # a hypothesis does not count: a justified conclusion replaces it (see run)
+        return bool(self._same(s, p, o, vf, vt, hyp=False))
 
     def run(self, max_rounds: int = 10) -> list[CommitResult]:
         """Apply rules until fixpoint; one changeset per round."""
         results = []
         for n in range(1, max_rounds + 1):
-            ops = self.derive()
-            if not ops:
+            adds = self.derive()
+            if not adds:
                 break
+            ops: list[Op] = []
+            for add in adds:
+                subj, obj = add.subject, add.object
+                assert isinstance(subj, EntityIdRef)
+                value = obj.id if isinstance(obj, EntityIdRef) else obj.value  # type: ignore[union-attr]
+                for h in self._same(
+                    subj.id, add.predicate, value, add.valid_from, add.valid_to, hyp=True
+                ):
+                    if h.epistemic_type is EpistemicType.HYPOTHESIS:
+                        ops.append(
+                            Retract(
+                                assertion_id=h.id,
+                                reason=f"derived by {add.extracted_by}",
+                                status=Status.SUPERSEDED,
+                            )
+                        )
+            ops += adds
             results.append(self.store.commit(REASONER, f"inference round {n}", ops))
         return results

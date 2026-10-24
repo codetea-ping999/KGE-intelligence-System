@@ -18,6 +18,7 @@ from kge.pipeline import Engine
 from kge.qa import checks
 
 KGO = rdflib.Namespace(DEFAULT_BASE + "ontology/")
+KGS = rdflib.Namespace(DEFAULT_BASE + "schema#")
 
 AXIOMS = """
 entity_types:
@@ -318,7 +319,33 @@ def test_ontology_exported_as_owl() -> None:
     assert (KGO.employs, OWL.inverseOf, KGO.works_for) in g
     assert (KGO.works_for, RDF.type, OWL.ObjectProperty) in g
     assert (KGO.founded_in, RDF.type, OWL.DatatypeProperty) in g
-    assert (KGO.works_for, RDF.type, OWL.FunctionalProperty) in g
+    # works_for is temporal: one value at a time, not one value ever, so not owl:Functional
+    assert (KGO.works_for, RDF.type, OWL.FunctionalProperty) not in g
+    assert (KGO.works_for, KGS.functionalAtEachTime, rdflib.Literal(True)) in g
+    assert (KGO.located_in, RDF.type, OWL.FunctionalProperty) in g  # timeless
+
+
+def test_functional_super_property_limits_sub_property_values(tmp_path: Path) -> None:
+    e = _engine(
+        tmp_path,
+        AXIOMS.replace(
+            "works_for: {domain: Person, range: Organization, temporal: true}",
+            "works_for: {domain: Person, range: Organization, temporal: true, functional: true}",
+        ),
+    )
+    r = ingest_specs(
+        e,
+        "a",
+        "a",
+        lambda s: [
+            cand(s, "鈴木", "leads", "Acme社", valid_from="2024-01-01"),
+            cand(s, "鈴木", "leads", "Beta社", valid_from="2024-01-01"),
+        ],
+    )
+    assert len(r.accepted) == 1 and len(r.pending) == 1
+    [sc] = [e.store.get_candidate(c) for c in r.pending]
+    assert "CONFLICT_CARDINALITY" in sc.report.codes()  # type: ignore[union-attr]
+    assert all(c.ok for c in checks(e.store))
 
 
 def test_axiom_characteristics_exported(tmp_path: Path) -> None:
