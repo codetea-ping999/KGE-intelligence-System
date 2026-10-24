@@ -168,7 +168,21 @@ class Validator:
                             f"verified statement replaces {a.epistemic_type.value} {a.id}",
                             [a.id],
                         )
-                    elif same_period:
+                    elif (
+                        same_period
+                        and effective_type is EpistemicType.HYPOTHESIS
+                        and a.epistemic_type is not EpistemicType.HYPOTHESIS
+                    ):
+                        # a guess must not become support for established knowledge: it
+                        # would keep the statement alive after its real evidence is gone
+                        add(
+                            "WEAKER_THAN_EXISTING",
+                            Severity.INFO,
+                            f"already established as {a.epistemic_type.value} {a.id};"
+                            " kept as a separate hypothesis",
+                            [a.id],
+                        )
+                    elif same_period and duplicate_of is None:
                         duplicate_of = a.id
                         add(
                             "DUPLICATE_EXACT",
