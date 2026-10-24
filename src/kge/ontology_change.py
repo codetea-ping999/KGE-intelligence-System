@@ -183,20 +183,21 @@ def apply(
         raise ReviewError("ontology changes must be approved by a human: use 'human:<name>'")
     if not reason.strip():
         raise ReviewError("a reason is required")
-    p = plan(engine, new)
-    if p.empty:
-        raise ReviewError("the ontology is unchanged")
-    blocking = p.blocking(retract_invalid)
-    if blocking:
-        raise ReviewError("; ".join(blocking))
-
     store = engine.store
-    previous = store.ontology
+    previous, pending = store.ontology, store.pending_ontology
     try:
-        return _apply(engine, new, actor, reason, p)
+        # plan under the write lock, so no other writer can change what it describes
+        with store.transaction():
+            p = plan(engine, new)
+            if p.empty:
+                raise ReviewError("the ontology is unchanged")
+            blocking = p.blocking(retract_invalid)
+            if blocking:
+                raise ReviewError("; ".join(blocking))
+            return _apply(engine, new, actor, reason, p)
     except BaseException:
-        # the transaction rolled back; put the in-memory ontology back as well
-        store.ontology = previous
+        # the transaction rolled back; put the in-memory state back as well
+        store.ontology, store.pending_ontology = previous, pending
         engine.refresh()
         raise
 

@@ -244,9 +244,13 @@ class Ontology(BaseModel):
         return sorted(n for n, p in self.predicates.items() if not derived(n, p))
 
     def canonical_json(self) -> str:
-        """Stable serialization: the same definitions always give the same text and hash."""
+        """Stable serialization: the same definitions always give the same text and hash.
+        Rules are keyed by id (as the structural diff sees them), so reordering them in the
+        file changes nothing."""
+        data = self.model_dump(mode="json", by_alias=True)
+        data["rules"] = sorted(data["rules"], key=lambda r: r["id"])
         return json.dumps(
-            self.model_dump(mode="json", by_alias=True),
+            data,
             sort_keys=True,
             ensure_ascii=False,
             separators=(",", ":"),
