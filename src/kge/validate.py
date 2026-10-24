@@ -220,6 +220,8 @@ class Validator:
                     f" with this one {held} would hold at the same time",
                     related,
                 )
+        if duplicate_of is None:
+            self._check_super_properties(cand, subj_id, batch, exclude, add, conflicts)
         if pdef.functional:
             for other in batch:
                 if (
@@ -245,6 +247,54 @@ class Validator:
             conflicts_with=conflicts,
             supersedes=supersedes,
         )
+
+    def _check_super_properties(
+        self,
+        cand: Candidate,
+        subj_id: str | None,
+        batch: Sequence[Candidate],
+        exclude: set[str] | frozenset[str],
+        add: _Add,
+        conflicts: list[str],
+    ) -> None:
+        """A sub-property value is also a value of each super-property (the reasoner derives
+        it), so it must fit their limits too: two simultaneous ``leads`` would otherwise give
+        two ``works_for`` when ``works_for`` is functional."""
+        value, window = cand.key()[2], (cand.valid_from, cand.valid_to)
+        for sp in self.ontology.super_properties(cand.predicate):
+            limit = self.ontology.predicates[sp].cardinality_limit
+            if limit is None:
+                continue
+            family = {sp} | {
+                n for n in self.ontology.predicates if sp in self.ontology.super_properties(n)
+            }
+            spans: list[tuple[str, dt.date | None, dt.date | None]] = [(value, *window)]
+            related: list[str] = []
+            if subj_id is not None:
+                for a in self.store.active(
+                    subject=subj_id, predicate=sp, include_hypotheses=True, exclude=exclude
+                ):
+                    if intervals_overlap(a.valid_from, a.valid_to, *window):
+                        spans.append((self._value(a), a.valid_from, a.valid_to))
+                        if self._value(a) != value:
+                            related.append(a.id)
+            spans += [
+                (o.key()[2], o.valid_from, o.valid_to)
+                for o in batch
+                if o.subject.label == cand.subject.label
+                and o.predicate in family
+                and intervals_overlap(o.valid_from, o.valid_to, *window)
+            ]
+            held = max_concurrent(spans, window)
+            if held > limit:
+                conflicts.extend(related)
+                add(
+                    "CONFLICT_CARDINALITY",
+                    Severity.CONFLICT,
+                    f"{cand.predicate} implies {sp}, which allows at most {limit} values per"
+                    f" subject; with this one {held} would hold at the same time",
+                    related,
+                )
 
     def _value(self, a: Assertion) -> str:
         """The object as a candidate would name it (entity label or literal value)."""

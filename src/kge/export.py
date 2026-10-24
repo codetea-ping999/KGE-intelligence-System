@@ -100,12 +100,22 @@ def to_turtle(store: Store, base: str = DEFAULT_BASE, include_history: bool = Tr
         w.node(f"kgo:{name}", pairs)
     for name, p in sorted(onto.predicates.items()):
         kinds = ["owl:DatatypeProperty" if p.literal_range else "owl:ObjectProperty"]
+        # the plain triples of a temporal predicate flatten time away, so OWL characteristics
+        # that combine triples (one value only, chaining) would hold across periods; they are
+        # stated per point in time with kgs: terms instead
+        timeless: list[tuple[str, str]] = []
         if p.functional:
-            kinds.append("owl:FunctionalProperty")
+            if p.temporal:
+                timeless.append(("kgs:functionalAtEachTime", _typed("true", "xsd:boolean")))
+            else:
+                kinds.append("owl:FunctionalProperty")
         if p.symmetric:
             kinds.append("owl:SymmetricProperty")
         if p.transitive:
-            kinds.append("owl:TransitiveProperty")
+            if p.temporal:
+                timeless.append(("kgs:transitiveAtEachTime", _typed("true", "xsd:boolean")))
+            else:
+                kinds.append("owl:TransitiveProperty")
         rng = p.range if p.literal_range else f"kgo:{p.range}"
         pairs = [
             ("a", ", ".join(kinds)),
@@ -122,6 +132,7 @@ def to_turtle(store: Store, base: str = DEFAULT_BASE, include_history: bool = Tr
                 ("kgs:maxCardinality", _typed(str(p.max_cardinality), "xsd:nonNegativeInteger"))
             )
         pairs.append(("kgs:temporal", _typed(str(p.temporal).lower(), "xsd:boolean")))
+        pairs += timeless
         if p.description:
             pairs.append(("rdfs:comment", _lit(p.description, "ja")))
         w.node(f"kgo:{name}", pairs)
