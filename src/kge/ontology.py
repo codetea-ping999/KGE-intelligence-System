@@ -181,6 +181,15 @@ class Ontology(BaseModel):
 
     # -------------------------------------------------------------- property axioms
 
+    def super_properties(self, name: str) -> list[str]:
+        """Predicates that ``name`` implies through ``subproperty_of``, nearest first."""
+        out: list[str] = []
+        sup = self.predicates[name].subproperty_of
+        while sup is not None and sup not in out:
+            out.append(sup)
+            sup = self.predicates[sup].subproperty_of
+        return out
+
     def axiom_rules(self) -> list[RuleDef]:
         """Property characteristics compiled into ordinary rules, so that every entailment
         goes through the reasoner and gets a justification like any other inference."""

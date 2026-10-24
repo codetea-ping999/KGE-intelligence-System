@@ -118,12 +118,22 @@ def to_turtle(store: Store, base: str = DEFAULT_BASE, include_history: bool = Tr
         w.node(f"kgo:{name}", pairs)
     for name, p in sorted(onto.predicates.items()):
         kinds = ["owl:DatatypeProperty" if p.literal_range else "owl:ObjectProperty"]
+        # the plain triples of a temporal predicate flatten time away, so OWL characteristics
+        # that combine triples (one value only, chaining) would hold across periods; they are
+        # stated per point in time with kgs: terms instead
+        timeless: list[tuple[str, str]] = []
         if p.functional:
-            kinds.append("owl:FunctionalProperty")
+            if p.temporal:
+                timeless.append(("kgs:functionalAtEachTime", _typed("true", "xsd:boolean")))
+            else:
+                kinds.append("owl:FunctionalProperty")
         if p.symmetric:
             kinds.append("owl:SymmetricProperty")
         if p.transitive:
-            kinds.append("owl:TransitiveProperty")
+            if p.temporal:
+                timeless.append(("kgs:transitiveAtEachTime", _typed("true", "xsd:boolean")))
+            else:
+                kinds.append("owl:TransitiveProperty")
         rng = p.range if p.literal_range else f"kgo:{p.range}"
         pairs = [
             ("a", ", ".join(kinds)),
@@ -140,6 +150,7 @@ def to_turtle(store: Store, base: str = DEFAULT_BASE, include_history: bool = Tr
                 ("kgs:maxCardinality", _typed(str(p.max_cardinality), "xsd:nonNegativeInteger"))
             )
         pairs.append(("kgs:temporal", _typed(str(p.temporal).lower(), "xsd:boolean")))
+        pairs += timeless
         if p.description:
             pairs.append(("rdfs:comment", _lit(p.description, "ja")))
         w.node(f"kgo:{name}", pairs)
@@ -201,6 +212,16 @@ def to_turtle(store: Store, base: str = DEFAULT_BASE, include_history: bool = Tr
     for a in assertions:
         agents.update({a.extracted_by, a.approved_by})
         w.node(f"kge:{a.id}", _assertion_pairs(a, store.history(a.id)))
+        for i, ev in enumerate(a.evidence, start=1):
+            # one node per evidence record keeps each quote with the source it came from
+            ev_pairs = [
+                ("a", "kgs:Evidence"),
+                ("prov:wasDerivedFrom", f"kge:{ev.source_id}_v{ev.source_version}"),
+                ("kgs:quote", _lit(ev.quote)),
+            ]
+            if ev.locator:
+                ev_pairs.append(("kgs:locator", _lit(ev.locator)))
+            w.node(f"kge:{a.id}_ev{i}", ev_pairs)
         if a.status is Status.ACCEPTED and a.epistemic_type is not EpistemicType.HYPOTHESIS:
             w.blocks.append(f"kge:{a.subject} kgo:{a.predicate} {_object(a)} .")
 
@@ -247,9 +268,9 @@ def _assertion_pairs(a: Assertion, history: list[Assertion]) -> list[tuple[str, 
         assert closed is not None
         pairs.append(("prov:invalidatedAtTime", _dt(closed)))
         pairs.append(("prov:wasInvalidatedBy", f"kge:changeset_{a.changeset}"))
-    for ev in a.evidence:
+    for i, ev in enumerate(a.evidence, start=1):
         pairs.append(("prov:wasDerivedFrom", f"kge:{ev.source_id}_v{ev.source_version}"))
-        pairs.append(("kgs:quote", _lit(ev.quote)))
+        pairs.append(("kgs:evidence", f"kge:{a.id}_ev{i}"))
     if a.justification:
         pairs.append(("kgs:rule", f"kge:rule_{_local(a.justification.rule_id)}"))
         for pid in a.justification.premise_ids:
