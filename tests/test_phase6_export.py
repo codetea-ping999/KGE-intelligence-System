@@ -87,3 +87,20 @@ def test_local_names_are_injective_and_decimals_have_no_exponent() -> None:
     )
     assert len(set(rdflib.Graph().parse(data=ttl, format="turtle").subjects())) == len(names)
     assert _decimal(1e-07) == "0.0000001" and _decimal(0.7) == "0.7" and _decimal(1.0) == "1.0"
+
+
+def test_each_quote_stays_with_its_source() -> None:
+    e, g = _graph()
+    rows = list(
+        g.query(
+            """SELECT ?a ?src ?q WHERE { ?a kgs:evidence ?ev .
+                 ?ev prov:wasDerivedFrom ?src ; kgs:quote ?q }""",
+            initNs={"kgs": KGS, "prov": PROV},
+        )
+    )
+    expected = {
+        (str(KGE[a.id]), str(KGE[f"{ev.source_id}_v{ev.source_version}"]), ev.quote)
+        for a in e.store.active(include_hypotheses=True)
+        for ev in a.evidence
+    }
+    assert {(str(a), str(s), str(q)) for a, s, q in rows} >= expected and expected

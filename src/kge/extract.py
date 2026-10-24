@@ -112,7 +112,10 @@ class RuleExtractor:
 
 
 class LLMClient(Protocol):
-    model: str
+    @property
+    def model(self) -> str:
+        """The model that produced the last answer."""
+        ...
 
     def complete(self, prompt: str) -> str: ...
 

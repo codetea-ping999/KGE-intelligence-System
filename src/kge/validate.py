@@ -73,7 +73,7 @@ class Validator:
             )
 
         # -- terms: types, disjointness, near-duplicate entities
-        subj_id = self._check_entity(cand.subject, pdef.domain, "subject", add)
+        subj_id = self._check_entity(cand.subject, pdef.domain, "subject", add, batch)
         obj_key: str | None = None
         if pdef.literal_range:
             if not isinstance(cand.object, LiteralValue):
@@ -95,7 +95,7 @@ class Validator:
         elif not isinstance(cand.object, EntityRef):
             add("SCHEMA_RANGE", Severity.ERROR, f"{cand.predicate} expects a {pdef.range} entity")
         else:
-            obj_key = self._check_entity(cand.object, pdef.range, "object", add)
+            obj_key = self._check_entity(cand.object, pdef.range, "object", add, batch)
 
         # -- provenance
         verified_independent = False
@@ -161,15 +161,16 @@ class Validator:
                     same_period = a.valid_from == cand.valid_from and a.valid_to == cand.valid_to
                     if (
                         same_period
-                        and a.epistemic_type is EpistemicType.HYPOTHESIS
+                        and a.epistemic_type is not EpistemicType.FACT
                         and effective_type is EpistemicType.FACT
                     ):
-                        # merging evidence would leave a verified statement as a hypothesis
+                        # merging evidence would leave a verified statement as a hypothesis,
+                        # or as an inference that falls with its premises
                         supersedes.append(a.id)
                         add(
-                            "PROMOTES_HYPOTHESIS",
+                            "PROMOTES_TO_FACT",
                             Severity.INFO,
-                            f"verified statement replaces hypothesis {a.id}",
+                            f"verified statement replaces {a.epistemic_type.value} {a.id}",
                             [a.id],
                         )
                     elif same_period:
@@ -253,8 +254,36 @@ class Validator:
         obj = self.store.label(a.object_value) if a.object_kind == "entity" else a.object_value
         return f"{obj}, {a.valid_from or '-∞'}..{a.valid_to or '∞'}"
 
-    def _check_entity(self, ref: EntityRef, implied: str, role: str, add: _Add) -> str | None:
+    def _batch_types(self, label: str, batch: Sequence[Candidate]) -> set[str]:
+        """Types earlier candidates of this ingestion give an entity not yet in the store."""
+        out: set[str] = set()
+        for o in batch:
+            pd = self.ontology.predicates.get(o.predicate)
+            if pd is None:
+                continue
+            if o.subject.label == label:
+                out.add(o.subject.type or pd.domain)
+            if isinstance(o.object, EntityRef) and o.object.label == label:
+                out.add(o.object.type or pd.range)
+        return out
+
+    def _check_entity(
+        self,
+        ref: EntityRef,
+        implied: str,
+        role: str,
+        add: _Add,
+        batch: Sequence[Candidate] = (),
+    ) -> str | None:
         """Returns the id of the existing entity the reference resolves to, if any."""
+        for t in sorted(self._batch_types(ref.label, batch)):
+            if t != implied and self.ontology.disjoint(t, implied):
+                add(
+                    "TYPE_DISJOINT",
+                    Severity.ERROR,
+                    f"{ref.label!r} is {t} earlier in this ingestion, which is disjoint with"
+                    f" {implied}",
+                )
         if ref.type is not None:
             if ref.type not in self.ontology.entity_types:
                 add("SCHEMA_UNKNOWN_TYPE", Severity.ERROR, f"unknown entity type {ref.type}")

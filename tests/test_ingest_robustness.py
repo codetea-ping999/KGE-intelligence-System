@@ -106,3 +106,64 @@ def test_as_of_time_zone_does_not_change_the_answer(engine) -> None:  # type: ig
     tokyo = t.astimezone(dt.timezone(dt.timedelta(hours=9)))
     at_utc = [(a.id, a.object_value) for a in engine.store.snapshot(at=t)]
     assert at_utc and [(a.id, a.object_value) for a in engine.store.snapshot(at=tokyo)] == at_utc
+
+
+def test_inference_replaces_matching_hypothesis(engine) -> None:  # type: ignore[no-untyped-def]
+    ingest_specs(
+        engine,
+        "memo",
+        "田中アリスは日本で働いているらしい。",
+        lambda s: [
+            cand(
+                s,
+                "田中アリス",
+                "works_in_country",
+                "日本",
+                etype=EpistemicType.HYPOTHESIS,
+                quote="",
+                valid_from="2019-04-01",
+            )
+        ],
+    )
+    [hyp] = engine.store.active(predicate="works_in_country", include_hypotheses=True)
+    engine.ingest("doc", DOC, rule(engine))
+    [inf] = engine.store.active(predicate="works_in_country")
+    assert inf.epistemic_type is EpistemicType.INFERENCE
+    assert engine.store.history(hyp.id)[-1].status is Status.SUPERSEDED
+
+
+def test_fact_matching_an_inference_survives_its_premises(engine) -> None:  # type: ignore[no-untyped-def]
+    engine.ingest("doc", DOC, rule(engine))
+    [inf] = engine.store.active(predicate="works_in_country")
+    ingest_specs(
+        engine,
+        "hr",
+        "人事記録: 田中アリスの勤務国は日本。",
+        lambda s: [cand(s, "田中アリス", "works_in_country", "日本", valid_from="2019-04-01")],
+    )
+    [fact] = engine.store.active(predicate="works_in_country")
+    assert fact.epistemic_type is EpistemicType.FACT and fact.id != inf.id
+    engine.ingest("doc", "Acme社は日本に所在する。\n", rule(engine))  # works_for withdrawn
+    assert [a.id for a in engine.store.active(predicate="works_in_country")] == [fact.id]
+
+
+def test_disjoint_types_within_one_ingestion_reject_only_the_offender(engine) -> None:  # type: ignore[no-untyped-def]
+    r = engine.ingest("doc", "Xは日本に所在する。\nXはAcme社に勤務している。\n", rule(engine))
+    assert len(r.accepted) == 1 and len(r.rejected) == 1
+    [bad] = [engine.store.get_candidate(c) for c in r.rejected]
+    assert bad is not None and "TYPE_DISJOINT" in bad.report.codes()  # type: ignore[union-attr]
+
+
+def test_rejected_candidate_does_not_count_against_later_ones(engine) -> None:  # type: ignore[no-untyped-def]
+    r = ingest_specs(
+        engine,
+        "x",
+        "Acme社は日本に所在する。",
+        lambda s: [
+            cand(
+                s, "Acme社", "located_in", "日本", quote="本文にない引用"
+            ),  # rejected: no evidence
+            cand(s, "Acme社", "located_in", "ドイツ"),
+        ],
+    )
+    assert len(r.rejected) == 1 and len(r.accepted) == 1 and r.pending == []
