@@ -51,6 +51,10 @@ uv run kge retract A00003 --actor human:you --reason "..."   # 依存する推�
 uv run kge audit verify                # 監査ログの改ざん検査
 uv run kge qa                          # 品質ゲート
 uv run kge ontology                    # クラス階層・述語の特性・推論ルールの一覧
+uv run kge ontology plan               # オントロジーファイルの変更が既存知識に与える影響
+uv run kge ontology apply --actor human:you --reason "..."   # 変更を適用（版を記録して移行）
+uv run kge ontology log                # オントロジーの版の一覧
+uv run kge ontology diff 1 2           # 2つの版の差分
 ```
 
 `KGE_CLOCK=fixed` を指定すると時計が固定され、実行結果が完全に再現されます。
@@ -76,6 +80,17 @@ IRI の基点は `--base` で変えられます。
 - `functional` / `max_cardinality`: 同じ主語が同じ時期に取れる値の数の上限です。上限を超える候補は矛盾として人手のレビューに回ります。
 
 定義に矛盾があるオントロジー（階層の循環、排他なクラス同士の下位になるクラス、逆プロパティの型が鏡像になっていないもの、など）は読み込み時に拒否されます。`uv run kge ontology` で、階層と変換後のルールを確認できます。
+
+### オントロジーの版管理
+
+オントロジーも知識と同じように版管理します。データベースには、その知識に適用されているオントロジーの版が記録されます（追記のみで、書き換えも削除もできません）。
+
+- オントロジーファイルを書き換えると、そのままではデータベースを開けません。`kge ontology plan` で影響を確認し、`kge ontology apply` で適用します。
+- `plan` は読み取り専用で、構造の差分（型・述語・ルール。特性から変換されたルールも含む）、新しい定義に合わなくなる記述、ルールが消えたり変わったりして取り下げる推論（連鎖を含む）、新たに生じる値の数の超過、排他になる型を持つ実体、検証結果が変わるレビュー待ち候補を示します。
+- `apply` は人（`human:`）の承認と理由を必要とします。新しい版の記録、取り下げ（理由つきのチェンジセット）、推論のやり直し、レビュー待ち候補の再検証を、1つのトランザクションで行います。人が確認した事実が定義に合わなくなる場合は、`--retract-invalid` を付けない限り適用しません。値の数の超過は自動では解消せず、品質チェックで報告します。
+- 各チェンジセットがどの版のもとで書かれたかを辿れるので、過去の時点の知識は当時のオントロジーで解釈できます。RDF 出力では `owl:versionIRI`、`owl:priorVersion`、版ごとの `prov:Entity` で表します。
+
+デモの最後では、`fixtures/ontology/base_v2.yaml`（`works_in_region` を廃止し、組織の所在地域 `located_in_region` を追加）を適用します。そのため `make qa` はデモのデータベースを v2 で検査します。
 
 ## 実 LLM（Claude API）での抽出
 
@@ -107,6 +122,7 @@ uv run kge ingest fixtures/docs/news_2026.txt --extractor llm --llm claude --rec
 | AC10, AC11 | 再現性、品質ゲート、CLI 一連操作 | `tests/test_ac10_ac11_reproducibility_qa.py` |
 | フェーズ6 | RDF/PROV-O 出力、Claude API 接続と録画 | `tests/test_phase6_export.py`, `tests/test_phase6_claude_adapter.py` |
 | フェーズ7a | クラス階層、プロパティ特性、カーディナリティ、OWL 出力 | `tests/test_ontology_semantics.py` |
+| フェーズ7b | オントロジーの版管理、影響分析、承認つきの移行 | `tests/test_ontology_versioning.py` |
 
 ## 構成
 
@@ -119,6 +135,7 @@ src/kge/extract.py        ルール抽出器 / LLM 抽出器 + 録画応答リ�
 src/kge/pipeline.py       取り込み・差分更新・レビュー・取り消し
 src/kge/reason.py         前向き推論
 src/kge/versioning.py     差分・影響分析
+src/kge/ontology_change.py オントロジーの差分・影響分析・移行
 src/kge/audit.py          ハッシュ連鎖監査ログ
 src/kge/qa.py             品質指標・不変条件チェック・golden 回帰
 src/kge/export.py         RDF (Turtle) / PROV-O 出力

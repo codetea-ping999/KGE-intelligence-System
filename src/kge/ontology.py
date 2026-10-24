@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import json
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -249,6 +251,22 @@ class Ontology(BaseModel):
             return self.predicates[inv].inverse_of != name or inv < name
 
         return sorted(n for n, p in self.predicates.items() if not derived(n, p))
+
+    def canonical_json(self) -> str:
+        """Stable serialization: the same definitions always give the same text and hash.
+        Rules are keyed by id (as the structural diff sees them), so reordering them in the
+        file changes nothing."""
+        data = self.model_dump(mode="json", by_alias=True)
+        data["rules"] = sorted(data["rules"], key=lambda r: r["id"])
+        return json.dumps(
+            data,
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+
+    def content_hash(self) -> str:
+        return hashlib.sha256(self.canonical_json().encode("utf-8")).hexdigest()
 
     @classmethod
     def load(cls, path: str | Path) -> Ontology:

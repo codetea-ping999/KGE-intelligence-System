@@ -111,7 +111,8 @@ def test_failed_live_call_rolls_back_the_ingest(engine) -> None:  # type: ignore
         engine.ingest("news", doc("news_2026.txt"), extractor)
     assert engine.store.candidates() == []
     assert engine.store.conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0] == 0
-    assert [e["action"] for e in audit.entries(engine.store.conn)] == ["ingest_failed"]
+    actions = [e["action"] for e in audit.entries(engine.store.conn)]
+    assert actions == ["ontology_registered", "ingest_failed"]
     assert audit.verify(engine.store.conn).ok
     # a retry with a working client is processed, not skipped as "unchanged"
     working, _ = fake_client()

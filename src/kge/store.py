@@ -113,6 +113,14 @@ CREATE TRIGGER IF NOT EXISTS av_close_only BEFORE UPDATE ON assertion_versions
 WHEN OLD.cs_to IS NOT NULL OR NEW.cs_to IS NULL OR NEW.tx_to IS NULL
   OR {" OR ".join(f"NEW.{c} IS NOT OLD.{c}" for c in _AV_COLUMNS)}
 BEGIN SELECT RAISE(ABORT, 'assertion versions may only be closed, never edited'); END;
+CREATE TABLE IF NOT EXISTS ontology_versions(
+  version INTEGER PRIMARY KEY, content_hash TEXT NOT NULL, content TEXT NOT NULL,
+  after_changeset INTEGER NOT NULL, recorded_at TEXT NOT NULL, actor TEXT NOT NULL,
+  reason TEXT NOT NULL);
+CREATE TRIGGER IF NOT EXISTS ov_no_update BEFORE UPDATE ON ontology_versions
+BEGIN SELECT RAISE(ABORT, 'ontology_versions is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS ov_no_delete BEFORE DELETE ON ontology_versions
+BEGIN SELECT RAISE(ABORT, 'ontology_versions is append-only'); END;
 CREATE TRIGGER IF NOT EXISTS ev_no_change BEFORE UPDATE ON evidence
 BEGIN SELECT RAISE(ABORT, 'evidence is append-only'); END;
 """
@@ -204,15 +212,122 @@ def _iso(d: dt.date | dt.datetime | None) -> str | None:
     return d.isoformat() if d else None
 
 
+class OntologyMismatch(Exception):
+    """The ontology given to the store is not the one in effect for its knowledge."""
+
+
+class OntologyVersion(BaseModel):
+    version: int
+    content_hash: str
+    after_changeset: int  # in effect for changesets after this one
+    recorded_at: dt.datetime
+    actor: str
+    reason: str
+
+
 class Store:
-    def __init__(self, path: str | Path, ontology: Ontology, clock: Clock | None = None) -> None:
+    def __init__(
+        self,
+        path: str | Path,
+        ontology: Ontology,
+        clock: Clock | None = None,
+        allow_ontology_change: bool = False,
+    ) -> None:
+        """The ontology in effect is the one recorded in the database. A different
+        ``ontology`` is refused, unless ``allow_ontology_change`` is set: then the recorded
+        one stays in effect and the new one is kept as ``pending_ontology`` until it is
+        applied (see ``kge.ontology_change``)."""
         self.path = str(path)
-        self.ontology = ontology
         self.clock: Clock = clock or SystemClock()
         self.conn = sqlite3.connect(self.path, isolation_level=None)
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.executescript(SCHEMA)
         self._in_tx = False
+        self.ontology = ontology
+        self.pending_ontology: Ontology | None = None
+        versions = self.ontology_versions()
+        if not versions:
+            self.record_ontology(ontology, "system", "initial ontology")
+        elif versions[-1].content_hash != ontology.content_hash():
+            current = versions[-1]
+            if not allow_ontology_change:
+                raise OntologyMismatch(
+                    f"the ontology differs from v{current.version}, which is in effect for"
+                    " this database; review it with 'kge ontology plan' and apply it with"
+                    " 'kge ontology apply'"
+                )
+            self.ontology = self.ontology_version(current.version)
+            self.pending_ontology = ontology
+
+    # ------------------------------------------------------------ ontology versions
+
+    def ontology_versions(self) -> list[OntologyVersion]:
+        rows = self.conn.execute(
+            "SELECT version, content_hash, after_changeset, recorded_at, actor, reason"
+            " FROM ontology_versions ORDER BY version"
+        ).fetchall()
+        return [
+            OntologyVersion(
+                version=r[0],
+                content_hash=r[1],
+                after_changeset=r[2],
+                recorded_at=dt.datetime.fromisoformat(r[3]),
+                actor=r[4],
+                reason=r[5],
+            )
+            for r in rows
+        ]
+
+    def ontology_version(self, version: int) -> Ontology:
+        row = self.conn.execute(
+            "SELECT content FROM ontology_versions WHERE version=?", (version,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown ontology version {version}")
+        return Ontology.model_validate_json(row[0])
+
+    def ontology_version_at(self, changeset: int) -> int:
+        """The ontology version that was in effect when ``changeset`` was written."""
+        row = self.conn.execute(
+            "SELECT MAX(version) FROM ontology_versions WHERE after_changeset < ? OR version = 1",
+            (changeset,),
+        ).fetchone()
+        return int(row[0])
+
+    def record_ontology(self, ontology: Ontology, actor: str, reason: str) -> int:
+        """Record ``ontology`` as the one in effect from the next changeset on."""
+        with self.transaction() as c:
+            row = c.execute("SELECT MAX(version) FROM ontology_versions").fetchone()
+            version = int(row[0] or 0) + 1
+            now = self.clock.now()
+            h = ontology.content_hash()
+            c.execute(
+                "INSERT INTO ontology_versions VALUES (?,?,?,?,?,?,?)",
+                (
+                    version,
+                    h,
+                    ontology.canonical_json(),
+                    self.head(),
+                    now.isoformat(),
+                    actor,
+                    reason,
+                ),
+            )
+            audit.append(
+                c,
+                now,
+                actor,
+                "ontology_registered" if version == 1 else "ontology_changed",
+                {
+                    "version": version,
+                    "content_hash": h,
+                    "after_changeset": self.head(),
+                    "reason": reason,
+                },
+            )
+        self.ontology = ontology
+        self.pending_ontology = None
+        return version
 
     def close(self) -> None:
         self.conn.close()
