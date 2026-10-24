@@ -120,8 +120,8 @@ def test_new_houjin_snapshot_is_an_incremental_update(e: Engine) -> None:
 
 
 def test_malformed_input_is_reported_not_imported(e: Engine) -> None:
-    text = houjin.convert("1,9000000000009,too,few,columns\n")
-    assert "expected 30 columns" in text
+    with pytest.raises(houjin.MalformedCSV, match="expected 30 columns"):
+        houjin.convert("1,9000000000009,too,few,columns\n")
     r = e.ingest(
         "bad",
         HEADER + "\nonly\tthree\tfields\n",
@@ -159,3 +159,73 @@ def test_cli_import(tmp_path: Path, capsys, monkeypatch) -> None:  # type: ignor
     assert main([*base, "import", "houjin", str(tmp_path / "missing.csv")]) == 2
     pending = Engine.open(tmp_path / "jp.db", ONTO).store.candidates(state=CandidateState.PENDING)
     assert len(pending) == 1
+
+
+def test_unreadable_row_aborts_the_reimport(e: Engine, tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    from kge.cli import main
+
+    _import(e, "houjin", "houjin_synthetic_v1.csv", "houjin")
+    lines = _read("houjin_synthetic_v1.csv").splitlines(keepends=True)
+    broken = next(i for i, ln in enumerate(lines) if B in ln)
+    lines[broken] = lines[broken].rstrip("\n").rsplit(",", 1)[0] + "\n"  # one cell short
+    bad = tmp_path / "bad.csv"
+    bad.write_text("".join(lines), "utf-8")
+    db = tmp_path / "jp.db"
+    base = ["--db", str(db), "--ontology", str(ONTO)]
+    assert (
+        main([*base, "import", "houjin", str(DATA / "houjin_synthetic_v1.csv"), "--uri", "h"]) == 0
+    )
+    before = len(Engine.open(db, ONTO).store.active())
+    assert main([*base, "import", "houjin", str(bad), "--uri", "h"]) == 2
+    assert "nothing imported" in capsys.readouterr().err
+    assert len(Engine.open(db, ONTO).store.active()) == before
+
+
+def test_same_name_different_corporate_number_stay_apart(e: Engine) -> None:
+    def row(num: str, pred: str, value: str, otype: str = "xsd:string") -> str:
+        return (
+            f"corporate_number:{num}\t同名商事株式会社\tCompany\t{pred}\t\t{value}\t{otype}\t\t\t"
+        )
+
+    text = "\n".join(
+        [
+            HEADER,
+            row(A, "corporate_number", A),
+            row(A, "inception_year", "1950", "xsd:gYear"),
+            row(B, "corporate_number", B),
+            row(B, "inception_year", "1990", "xsd:gYear"),
+        ]
+    )
+    r = e.ingest("x", text + "\n", DatasetExtractor(e.ontology, e.store, "import:test"))
+    assert r.pending == [] and r.rejected == []
+    numbers = {
+        e.store.label(a.subject): a.object_value
+        for a in e.store.active(predicate="corporate_number")
+    }
+    assert len(numbers) == 2 and set(numbers.values()) == {A, B}
+    # a later import of B under the plain name still finds B's entity
+    later = DatasetExtractor(e.ontology, e.store, "import:test")._resolver(
+        DatasetExtractor(e.ontology, e.store, "import:test")._index()
+    )
+    assert numbers[later(f"corporate_number:{B}", "同名商事株式会社")] == B
+
+
+def test_referenced_parent_keeps_its_corporate_number() -> None:
+    import json
+
+    def lit(v: str) -> dict[str, str]:
+        return {"type": "literal", "value": v}
+
+    binding = {
+        "item": {"type": "uri", "value": "http://www.wikidata.org/entity/QTEST9"},
+        "itemLabel": lit("架空子会社"),
+        "corp": lit(A),
+        "prop": lit("P749"),
+        "stmt": {"type": "uri", "value": "http://www.wikidata.org/entity/statement/QTEST9-1"},
+        "value": {"type": "uri", "value": "http://www.wikidata.org/entity/QTEST8"},
+        "valueLabel": lit("架空親会社"),
+        "valueCorp": lit(B),  # the parent has no subject rows of its own in this result
+    }
+    rows, _ = parse(wikidata.convert(json.dumps({"results": {"bindings": [binding]}})))
+    numbered = {(r.s_key, r.o_value) for _, r in rows if r.predicate == "corporate_number"}
+    assert (f"corporate_number:{B}", B) in numbered

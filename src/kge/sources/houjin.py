@@ -63,23 +63,31 @@ def _day_before(iso: str) -> str:
     return (dt.date.fromisoformat(iso) - dt.timedelta(days=1)).isoformat()
 
 
+class MalformedCSV(ValueError):
+    """Rows the converter cannot read. Importing the rest would make a re-import treat those
+    corporations' statements as deleted, so nothing is converted."""
+
+
 def convert(csv_text: str) -> str:
     records: dict[str, list[dict[str, str]]] = defaultdict(list)
     skipped: list[str] = []
+    errors: list[str] = []
     for n, cells in enumerate(csv.reader(io.StringIO(csv_text)), start=1):
         if not cells:
             continue
         if len(cells) != len(COLUMNS):
-            skipped.append(f"row {n}: expected {len(COLUMNS)} columns, got {len(cells)}")
+            errors.append(f"row {n}: expected {len(COLUMNS)} columns, got {len(cells)}")
             continue
         rec = dict(zip(COLUMNS, cells, strict=True))
+        if not (rec["corporateNumber"].isdigit() and len(rec["corporateNumber"]) == 13):
+            errors.append(f"row {n}: invalid corporate number")
+            continue
         if rec["hihyoji"] == "1":
             skipped.append(f"row {n}: excluded from search (hihyoji)")
             continue
-        if not (rec["corporateNumber"].isdigit() and len(rec["corporateNumber"]) == 13):
-            skipped.append(f"row {n}: invalid corporate number")
-            continue
         records[rec["corporateNumber"]].append(rec)
+    if errors:
+        raise MalformedCSV("; ".join(errors))
 
     rows: list[Row] = []
     for number, recs in sorted(records.items()):

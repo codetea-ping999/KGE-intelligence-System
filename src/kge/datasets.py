@@ -18,7 +18,7 @@ the store whatever its label is. Empty fields are empty strings.
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -105,21 +105,47 @@ class DatasetExtractor:
         self.id = ident
         self.source_prior = prior
 
-    def _resolve(self, key: str, label: str) -> str:
-        """The label of the entity already holding identifier ``key``, else ``label``."""
-        if not key:
-            return label
-        kind, _, value = key.partition(":")
-        pred = KEY_PREDICATES.get(kind)
-        if pred is None:
-            return label
-        for a in self.store.active(predicate=pred):
-            if a.object_value == value:
-                return self.store.label(a.subject)
-        return label
+    def _index(self) -> dict[str, dict[str, str]]:
+        """identifier kind -> value -> label of the entity holding it, read once per run."""
+        out: dict[str, dict[str, str]] = {}
+        for kind, pred in KEY_PREDICATES.items():
+            out[kind] = {
+                a.object_value: self.store.label(a.subject)
+                for a in self.store.active(predicate=pred)
+            }
+        return out
+
+    @staticmethod
+    def _resolver(index: dict[str, dict[str, str]]) -> Callable[[str, str], str]:
+        """Maps (key, label) to the label to use. An identifier already in the store links to
+        its entity whatever the label; a new identifier whose label is taken by an entity with
+        a different identifier gets a label naming the identifier, so two companies that share
+        a name never merge."""
+        taken = {
+            label: (kind, value) for kind, vals in index.items() for value, label in vals.items()
+        }
+        assigned: dict[tuple[str, str], str] = {}
+
+        def resolve(key: str, label: str) -> str:
+            if not key:
+                return label
+            kind, _, value = key.partition(":")
+            if kind not in index:
+                return label
+            if value in index[kind]:
+                return index[kind][value]
+            if (kind, value) not in assigned:
+                owner = taken.get(label)
+                chosen = label if owner in (None, (kind, value)) else f"{label}［{kind}:{value}］"
+                taken[chosen] = (kind, value)
+                assigned[(kind, value)] = chosen
+            return assigned[(kind, value)]
+
+        return resolve
 
     def extract(self, source: Source) -> ExtractionResult:
         rows, invalid = parse(source.content)
+        resolve = self._resolver(self._index())
         out: list[Candidate] = []
         for n, r in rows:
             try:
@@ -127,12 +153,10 @@ class DatasetExtractor:
                 if r.o_type.startswith("xsd:"):
                     obj = LiteralValue(value=r.o_value, datatype=r.o_type)
                 else:
-                    obj = EntityRef(label=self._resolve(r.o_key, r.o_value), type=r.o_type or None)
+                    obj = EntityRef(label=resolve(r.o_key, r.o_value), type=r.o_type or None)
                 out.append(
                     Candidate(
-                        subject=EntityRef(
-                            label=self._resolve(r.s_key, r.s_label), type=r.s_type or None
-                        ),
+                        subject=EntityRef(label=resolve(r.s_key, r.s_label), type=r.s_type or None),
                         predicate=r.predicate,
                         object=obj,
                         epistemic_type=EpistemicType.FACT,

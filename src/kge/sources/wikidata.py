@@ -181,6 +181,19 @@ def convert(results_json: str) -> str:
         else:  # parent_organization, ceo
             vcorp = _v(b, "valueCorp")
             okey = f"corporate_number:{vcorp}" if vcorp else ""
+            if vcorp:  # so a later registry import links to this entity, whatever its label
+                rows.append(
+                    Row(
+                        s_key=okey,
+                        s_label=label,
+                        s_type="Company",
+                        predicate="corporate_number",
+                        o_key="",
+                        o_value=vcorp,
+                        o_type="xsd:string",
+                        locator=f"wikidata:{_qid(value)}",
+                    )
+                )
             rows.append(
                 Row(
                     **subject,

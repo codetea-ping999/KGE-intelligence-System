@@ -80,7 +80,11 @@ def cmd_import(args: argparse.Namespace) -> int:
     e = _engine(args)
     path = Path(args.path)
     raw = path.read_text(encoding="utf-8-sig")
-    content = wikidata.convert(raw) if args.dataset == "wikidata" else houjin.convert(raw)
+    try:
+        content = wikidata.convert(raw) if args.dataset == "wikidata" else houjin.convert(raw)
+    except houjin.MalformedCSV as exc:
+        print(f"error: nothing imported, {path} has unreadable rows: {exc}", file=sys.stderr)
+        return 2
     ident, prior, title = IMPORTERS[args.dataset]
     if args.canonical_out:
         Path(args.canonical_out).write_text(content, encoding="utf-8")
