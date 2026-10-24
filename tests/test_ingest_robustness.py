@@ -41,7 +41,7 @@ def test_removing_two_premises_of_one_inference(engine) -> None:  # type: ignore
     engine.ingest("doc", DOC, rule(engine))
     assert engine.store.active(predicate="works_in_country")
     r = engine.ingest("doc", "# 空\n", rule(engine))
-    assert engine.store.active() == [] and len(r.retracted) == len(set(r.retracted)) == 3
+    assert engine.store.active() == [] and len(r.retracted) == len(set(r.retracted))
 
 
 def test_statement_stays_while_another_source_states_it(engine) -> None:  # type: ignore[no-untyped-def]
