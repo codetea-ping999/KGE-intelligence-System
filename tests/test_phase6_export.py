@@ -74,3 +74,15 @@ def test_active_only_and_escaping() -> None:
     from kge.export import _lit
 
     assert _lit('a"b\\c\nd') == '"a\\"b\\\\c\\nd"'
+
+
+def test_local_names_are_injective_and_decimals_have_no_exponent() -> None:
+    from kge.export import _decimal, _local
+
+    names = ["human:田中", "human:佐藤", "human:alice.smith", "human:alice_smith"]
+    assert len({_local(n) for n in names}) == len(names)
+    ttl = "@prefix kge: <urn:kge:> .\n" + "".join(
+        f"kge:agent_{_local(n)} a kge:A .\n" for n in names
+    )
+    assert len(set(rdflib.Graph().parse(data=ttl, format="turtle").subjects())) == len(names)
+    assert _decimal(1e-07) == "0.0000001" and _decimal(0.7) == "0.7" and _decimal(1.0) == "1.0"

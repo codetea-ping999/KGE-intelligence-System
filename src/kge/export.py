@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import re
+from decimal import Decimal
 
 from kge.models import Assertion, EpistemicType, Status
 from kge.store import Store
@@ -48,7 +49,14 @@ def _dt(value: dt.datetime) -> str:
 
 
 def _local(name: str) -> str:
-    return _SAFE_LOCAL.sub("_", name)
+    """Percent-encode everything outside [A-Za-z0-9_-] (Turtle allows %XX in local names), so
+    distinct identifiers never collapse onto one IRI."""
+    return _SAFE_LOCAL.sub(lambda m: "".join(f"%{b:02X}" for b in m[0].encode()), name)
+
+
+def _decimal(value: float) -> str:
+    """xsd:decimal has no exponent form, so 1e-07 must be written 0.0000001."""
+    return f"{Decimal(repr(value)):f}"
 
 
 class _Writer:
@@ -178,7 +186,7 @@ def _assertion_pairs(a: Assertion, history: list[Assertion]) -> list[tuple[str, 
         ("rdf:predicate", f"kgo:{a.predicate}"),
         ("rdf:object", _object(a)),
         ("kgs:status", _lit(a.status.value)),
-        ("kgs:confidence", _typed(repr(a.confidence), "xsd:decimal")),
+        ("kgs:confidence", _typed(_decimal(a.confidence), "xsd:decimal")),
         ("kgs:confidenceMethod", _lit(a.confidence_method)),
         ("prov:generatedAtTime", _dt(a.recorded_at)),
         ("prov:wasGeneratedBy", f"kge:changeset_{first.changeset}"),
