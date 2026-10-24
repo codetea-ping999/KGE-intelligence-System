@@ -206,9 +206,10 @@ class Engine:
             cid = self.store.stage(cand, f"{src.id}v{src.version}", src, extraction.raw_output)
             result.staged.append(cid)
             report = self.validator.validate(cand, batch, excluded)
-            batch.append(cand)
             self.store.set_report(cid, report)
             decision, why = auto_policy(cand.extracted_by, report)
+            if decision == "accept":
+                batch.append(cand)  # later candidates are checked against what gets committed
             if decision == "reject":
                 self.store.decide(cid, CandidateState.REJECTED, AUTO, why)
                 result.rejected.append(cid)
