@@ -12,7 +12,7 @@ from pathlib import Path
 
 from kge import audit, demo, qa
 from kge.clock import clock_from_env
-from kge.extract import Extractor, LLMExtractor, ReplayLLMClient, RuleExtractor
+from kge.extract import ExtractionFailed, Extractor, LLMExtractor, ReplayLLMClient, RuleExtractor
 from kge.models import Assertion, CandidateState
 from kge.pipeline import Engine, ReviewError
 from kge.store import UnauthorizedCommit
@@ -282,7 +282,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return int(args.func(args))
-    except (ReviewError, UnauthorizedCommit, KeyError) as exc:
+    except (ReviewError, UnauthorizedCommit, KeyError, ExtractionFailed) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 

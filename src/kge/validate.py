@@ -144,6 +144,7 @@ class Validator:
         # -- duplicates and contradictions against committed knowledge
         duplicate_of: str | None = None
         conflicts: list[str] = []
+        supersedes: list[str] = []
         if subj_id is not None:
             for a in self.store.active(
                 subject=subj_id, predicate=cand.predicate, include_hypotheses=True, exclude=exclude
@@ -152,7 +153,21 @@ class Validator:
                     a.valid_from, a.valid_to, cand.valid_from, cand.valid_to
                 )
                 if obj_key is not None and a.object_value == obj_key:
-                    if a.valid_from == cand.valid_from and a.valid_to == cand.valid_to:
+                    same_period = a.valid_from == cand.valid_from and a.valid_to == cand.valid_to
+                    if (
+                        same_period
+                        and a.epistemic_type is EpistemicType.HYPOTHESIS
+                        and effective_type is EpistemicType.FACT
+                    ):
+                        # merging evidence would leave a verified statement as a hypothesis
+                        supersedes.append(a.id)
+                        add(
+                            "PROMOTES_HYPOTHESIS",
+                            Severity.INFO,
+                            f"verified statement replaces hypothesis {a.id}",
+                            [a.id],
+                        )
+                    elif same_period:
                         duplicate_of = a.id
                         add(
                             "DUPLICATE_EXACT",
@@ -192,6 +207,7 @@ class Validator:
             effective_confidence=confidence,
             duplicate_of=duplicate_of,
             conflicts_with=conflicts,
+            supersedes=supersedes,
         )
 
     def _show(self, a: Assertion) -> str:
