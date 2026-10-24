@@ -1,0 +1,46 @@
+[project]
+name = "kge"
+version = "0.1.0"
+description = "Knowledge Graph Engineering PoC: extraction, validation, versioning and QA of knowledge"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.7,<3",
+    "pyyaml>=6,<7",
+]
+
+[project.scripts]
+kge = "kge.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+    "mypy>=1.10",
+    "types-pyyaml",
+]
+
+[build-system]
+requires = ["uv_build>=0.11,<0.12"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["kge", "conftest"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]

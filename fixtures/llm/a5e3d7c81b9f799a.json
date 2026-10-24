@@ -1,0 +1,6 @@
+{
+  "prompt_key": "a5e3d7c81b9f799a",
+  "model": "recorded-for-poc",
+  "note": "Recorded LLM response used for offline replay. Items 2-5 deliberately contain errors.",
+  "response": "{\"assertions\": [{\"subject\": \"佐藤ボブ\", \"subject_type\": \"Person\", \"predicate\": \"works_for\", \"object\": \"Acme社\", \"object_type\": \"Organization\", \"epistemic_type\": \"fact\", \"confidence\": 0.92, \"quote\": \"佐藤ボブは2023年1月からAcme社で働いている\", \"valid_from\": \"2023-01-01\"}, {\"subject\": \"Acme社\", \"subject_type\": \"Organization\", \"predicate\": \"founded_in\", \"object\": \"2006\", \"object_datatype\": \"xsd:gYear\", \"epistemic_type\": \"fact\", \"confidence\": 0.85, \"quote\": \"Acme社は2006年に設立された\"}, {\"subject\": \"田中アリス\", \"subject_type\": \"Person\", \"predicate\": \"works_for\", \"object\": \"Gamma社\", \"object_type\": \"Organization\", \"epistemic_type\": \"hypothesis\", \"confidence\": 0.4, \"quote\": \"\"}, {\"subject\": \"Acme社\", \"predicate\": \"develops\", \"object\": \"産業用センサー\", \"epistemic_type\": \"fact\", \"confidence\": 0.9, \"quote\": \"Acme社は創業以来、産業用センサーを開発してきた\"}, {\"subject\": \"佐藤ボブ\", \"predicate\": \"works_for\", \"epistemic_type\": \"fact\", \"confidence\": 0.8}]}"
+}

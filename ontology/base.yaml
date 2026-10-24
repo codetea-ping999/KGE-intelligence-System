@@ -1,0 +1,26 @@
+# 最小オントロジー: 人・組織・国・地域
+entity_types:
+  Person: {disjoint_with: [Organization, Country, Region]}
+  Organization: {disjoint_with: [Country, Region]}
+  Country: {disjoint_with: [Region]}
+  Region: {}
+
+predicates:
+  works_for:
+    {domain: Person, range: Organization, functional: true, temporal: true,
+     description: "勤務先（同時期に1つ）"}
+  located_in: {domain: Organization, range: Country, functional: true, description: "所在国"}
+  part_of: {domain: Country, range: Region, functional: true, description: "所属地域"}
+  founded_in: {domain: Organization, range: "xsd:gYear", functional: true, description: "設立年"}
+  works_in_country: {domain: Person, range: Country, temporal: true, description: "勤務国（推論）"}
+  works_in_region: {domain: Person, range: Region, temporal: true, description: "勤務地域（推論）"}
+
+rules:
+  - id: R1_work_country
+    if: ["?p works_for ?o", "?o located_in ?c"]
+    then: "?p works_in_country ?c"
+    confidence_factor: 0.95
+  - id: R2_work_region
+    if: ["?p works_in_country ?c", "?c part_of ?r"]
+    then: "?p works_in_region ?r"
+    confidence_factor: 0.95
