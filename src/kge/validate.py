@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from collections.abc import Sequence
 from typing import Protocol
 
@@ -17,6 +18,7 @@ from kge.models import (
     ValidationReport,
     intervals_overlap,
     is_llm_actor,
+    max_concurrent,
     normalize_text,
 )
 from kge.ontology import Ontology, literal_ok
@@ -145,6 +147,9 @@ class Validator:
         duplicate_of: str | None = None
         conflicts: list[str] = []
         supersedes: list[str] = []
+        limit = pdef.cardinality_limit
+        # overlapping values for the cardinality check: (value label, from, to, assertion id)
+        spans: list[tuple[str, dt.date | None, dt.date | None, str | None]] = []
         if subj_id is not None:
             for a in self.store.active(
                 subject=subj_id, predicate=cand.predicate, include_hypotheses=True, exclude=exclude
@@ -190,7 +195,9 @@ class Validator:
                             f"same statement already exists as {a.id}; evidence will be merged",
                             [a.id],
                         )
-                elif pdef.functional and overlap:
+                elif overlap and limit is not None:
+                    spans.append((self._value(a), a.valid_from, a.valid_to, a.id))
+                if pdef.functional and overlap and a.object_value != obj_key:
                     conflicts.append(a.id)
                     add(
                         "CONFLICT_FUNCTIONAL",
@@ -199,6 +206,36 @@ class Validator:
                         f" ({self._show(a)}) in an overlapping period",
                         [a.id],
                     )
+        if limit is not None and not pdef.functional and duplicate_of is None:
+            # functional predicates are covered by the CONFLICT_FUNCTIONAL checks
+            value = cand.key()[2]
+            spans += [
+                (other.key()[2], other.valid_from, other.valid_to, None)
+                for other in batch
+                if other.subject.label == cand.subject.label
+                and other.predicate == cand.predicate
+                and other.key()[2] != value
+                and intervals_overlap(
+                    other.valid_from, other.valid_to, cand.valid_from, cand.valid_to
+                )
+            ]
+            held = max_concurrent(
+                [(v, f, t) for v, f, t, _ in spans if v != value]
+                + [(value, cand.valid_from, cand.valid_to)],
+                (cand.valid_from, cand.valid_to),
+            )
+            if held > limit:
+                related = sorted({x for *_, x in spans if x is not None})
+                conflicts.extend(related)
+                add(
+                    "CONFLICT_CARDINALITY",
+                    Severity.CONFLICT,
+                    f"{cand.predicate} allows at most {limit} values per subject;"
+                    f" with this one {held} would hold at the same time",
+                    related,
+                )
+        if duplicate_of is None:
+            self._check_super_properties(cand, subj_id, batch, exclude, add, conflicts)
         if pdef.functional:
             for other in batch:
                 if (
@@ -224,6 +261,58 @@ class Validator:
             conflicts_with=conflicts,
             supersedes=supersedes,
         )
+
+    def _check_super_properties(
+        self,
+        cand: Candidate,
+        subj_id: str | None,
+        batch: Sequence[Candidate],
+        exclude: set[str] | frozenset[str],
+        add: _Add,
+        conflicts: list[str],
+    ) -> None:
+        """A sub-property value is also a value of each super-property (the reasoner derives
+        it), so it must fit their limits too: two simultaneous ``leads`` would otherwise give
+        two ``works_for`` when ``works_for`` is functional."""
+        value, window = cand.key()[2], (cand.valid_from, cand.valid_to)
+        for sp in self.ontology.super_properties(cand.predicate):
+            limit = self.ontology.predicates[sp].cardinality_limit
+            if limit is None:
+                continue
+            family = {sp} | {
+                n for n in self.ontology.predicates if sp in self.ontology.super_properties(n)
+            }
+            spans: list[tuple[str, dt.date | None, dt.date | None]] = [(value, *window)]
+            related: list[str] = []
+            if subj_id is not None:
+                for a in self.store.active(
+                    subject=subj_id, predicate=sp, include_hypotheses=True, exclude=exclude
+                ):
+                    if intervals_overlap(a.valid_from, a.valid_to, *window):
+                        spans.append((self._value(a), a.valid_from, a.valid_to))
+                        if self._value(a) != value:
+                            related.append(a.id)
+            spans += [
+                (o.key()[2], o.valid_from, o.valid_to)
+                for o in batch
+                if o.subject.label == cand.subject.label
+                and o.predicate in family
+                and intervals_overlap(o.valid_from, o.valid_to, *window)
+            ]
+            held = max_concurrent(spans, window)
+            if held > limit:
+                conflicts.extend(related)
+                add(
+                    "CONFLICT_CARDINALITY",
+                    Severity.CONFLICT,
+                    f"{cand.predicate} implies {sp}, which allows at most {limit} values per"
+                    f" subject; with this one {held} would hold at the same time",
+                    related,
+                )
+
+    def _value(self, a: Assertion) -> str:
+        """The object as a candidate would name it (entity label or literal value)."""
+        return self.store.label(a.object_value) if a.object_kind == "entity" else a.object_value
 
     def _show(self, a: Assertion) -> str:
         obj = self.store.label(a.object_value) if a.object_kind == "entity" else a.object_value
@@ -262,7 +351,7 @@ class Validator:
         if ref.type is not None:
             if ref.type not in self.ontology.entity_types:
                 add("SCHEMA_UNKNOWN_TYPE", Severity.ERROR, f"unknown entity type {ref.type}")
-            elif ref.type != implied:
+            elif not self.ontology.is_subtype(ref.type, implied):
                 kind = "SCHEMA_DOMAIN" if role == "subject" else "SCHEMA_RANGE"
                 add(kind, Severity.ERROR, f"{role} {ref.label!r} is {ref.type}, expected {implied}")
         existing = self.store.find_entity_by_label(ref.label)
@@ -278,12 +367,13 @@ class Validator:
                     [e.id for e in similar],
                 )
             return None
+        wanted = ref.type if ref.type in self.ontology.entity_types else implied
         for t in existing.types:
-            if t != implied and self.ontology.disjoint(t, implied):
+            if t != wanted and self.ontology.disjoint(t, wanted):
                 add(
                     "TYPE_DISJOINT",
                     Severity.ERROR,
-                    f"{existing.id}:{existing.label} is {t}, which is disjoint with {implied}",
+                    f"{existing.id}:{existing.label} is {t}, which is disjoint with {wanted}",
                     [existing.id],
                 )
         return existing.id
