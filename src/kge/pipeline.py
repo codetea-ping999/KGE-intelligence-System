@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Literal
 
 from kge.clock import Clock
-from kge.extract import Extractor
+from kge.extract import ExtractionFailed, Extractor
 from kge.models import (
     Candidate,
     CandidateState,
@@ -173,6 +173,10 @@ class Engine:
             return result
 
         extraction = extractor.extract(src)
+        if extraction.failed:
+            # an unreadable answer is not an empty document: removing what earlier versions
+            # stated would turn a failure into deletions
+            raise ExtractionFailed(f"{extractor.id} could not extract {uri}: {extraction.invalid}")
         result.invalid = len(extraction.invalid)
         if extraction.invalid:
             self.store.audit(
@@ -184,34 +188,34 @@ class Engine:
         # Incremental update: only what changed relative to the previous version is staged.
         live = self._live(src.id, extractor.id) if prev else {}
         new_keys = {c.key() for c in extraction.candidates}
-        retracts: list[Retract] = []
+        gone = f"no longer stated in {src.id} v{src.version}"
+        withdrawn: list[str] = []
         for key, sc in live.items():
             if key in new_keys:
                 continue
             if sc.state is CandidateState.PENDING:
-                self.store.decide(
-                    sc.id,
-                    CandidateState.OBSOLETE,
-                    actor,
-                    f"no longer stated in {src.id} v{src.version}",
-                )
-                result.obsolete.append(sc.id)
-                continue
-            assert sc.assertion_id is not None
-            a = self.store.get_assertion(sc.assertion_id)
-            assert a is not None
-            if {e.source_id for e in a.evidence} == {src.id}:
-                retracts.extend(
-                    retract_ops(self.store, [a.id], f"no longer stated in {src.id} v{src.version}")
-                )
+                self.store.decide(sc.id, CandidateState.OBSOLETE, actor, gone)
+            else:
+                assert sc.assertion_id is not None
+                self.store.withdraw_candidate(sc.id, actor, gone)
+                withdrawn.append(sc.assertion_id)
+            result.obsolete.append(sc.id)
+        # an assertion goes only when no source still states it; one retract_ops call so a
+        # shared dependent inference is retracted once
+        unsupported = [
+            a for a in dict.fromkeys(withdrawn) if not self.store.supporting_candidates(a)
+        ]
+        retracts: list[Retract] = retract_ops(self.store, unsupported, gone)
         excluded = {r.assertion_id for r in retracts}
 
         ops: list[Op] = list(retracts)
         batch: list[Candidate] = []
+        seen: set[tuple[str, ...]] = set()
         for cand in extraction.candidates:
-            if cand.key() in live:
-                result.unchanged += 1
+            if cand.key() in live or cand.key() in seen:
+                result.unchanged += 1  # already known, or stated twice in this version
                 continue
+            seen.add(cand.key())
             cid = self.store.stage(cand, f"{src.id}v{src.version}", src, extraction.raw_output)
             result.staged.append(cid)
             report = self.validator.validate(cand, batch, excluded)
@@ -226,6 +230,9 @@ class Engine:
             else:
                 staged = self.store.get_candidate(cid)
                 assert staged is not None
+                promoted = [h for h in report.supersedes if h not in excluded]
+                ops += retract_ops(self.store, promoted, f"verified by {cid}", Status.SUPERSEDED)
+                excluded.update(promoted)
                 ops.append(accept_op(staged, report, AUTO))
                 result.accepted.append(cid)
 
@@ -265,6 +272,8 @@ class Engine:
                 f"{cid} conflicts with {report.conflicts_with or 'other knowledge'};"
                 " supersede the conflicting assertion(s) or reject the candidate"
             )
+        promoted = [h for h in report.supersedes if h not in excluded]
+        retracts += retract_ops(self.store, promoted, f"verified by {cid}", Status.SUPERSEDED)
         ops: list[Op] = [*retracts, accept_op(sc, report, reviewer)]
         cr = self.store.commit(reviewer, f"review accept {cid}: {reason}", ops)
         return [cr, *self.reasoner.run()]

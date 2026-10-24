@@ -7,7 +7,7 @@
     "confidence": 0.7,
     "valid_from": "2023-01-01",
     "valid_to": null,
-    "extracted_by": "llm:replay@b1d635bb",
+    "extracted_by": "llm:recorded-for-poc@b1d635bb",
     "approved_by": "human:reviewer",
     "evidence": 1,
     "rule": null

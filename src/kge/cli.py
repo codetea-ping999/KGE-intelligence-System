@@ -14,6 +14,7 @@ from kge import audit, demo, ontology_change, qa
 from kge.clock import clock_from_env
 from kge.export import DEFAULT_BASE, to_turtle
 from kge.extract import (
+    ExtractionFailed,
     Extractor,
     LLMClient,
     LLMExtractor,
@@ -215,9 +216,10 @@ def cmd_demo(args: argparse.Namespace) -> int:
 def cmd_export(args: argparse.Namespace) -> int:
     store = _engine(args).store
     if args.format == "json":
-        _print_json(qa.export_snapshot(store))
-        return 0
-    text = to_turtle(store, base=args.base, include_history=not args.active_only)
+        text = json.dumps(qa.export_snapshot(store), ensure_ascii=False, indent=2, default=str)
+        text += "\n"
+    else:
+        text = to_turtle(store, base=args.base, include_history=not args.active_only)
     if args.out:
         Path(args.out).write_text(text, encoding="utf-8")
         print(f"wrote {args.out}")
@@ -461,6 +463,7 @@ def main(argv: list[str] | None = None) -> int:
         UnauthorizedCommit,
         OntologyMismatch,
         KeyError,
+        ExtractionFailed,
         LLMReplayMissing,
         LLMError,
     ) as exc:

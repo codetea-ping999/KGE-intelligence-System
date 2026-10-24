@@ -16,15 +16,22 @@ from kge.models import Candidate, EntityRef, EpistemicType, Evidence, LiteralVal
 from kge.ontology import Ontology
 
 
+class ExtractionFailed(Exception):
+    """The extractor could not read its input; the ingestion is rolled back."""
+
+
 @dataclass
 class ExtractionResult:
     candidates: list[Candidate]
     invalid: list[dict[str, Any]] = field(default_factory=list)
     raw_output: str | None = None
+    #: the extractor could not read its input at all (as opposed to finding nothing in it)
+    failed: bool = False
 
 
 class Extractor(Protocol):
-    id: str
+    @property
+    def id(self) -> str: ...
 
     def extract(self, source: Source) -> ExtractionResult: ...
 
@@ -121,10 +128,10 @@ def prompt_key(prompt: str) -> str:
 class ReplayLLMClient:
     """Returns recorded responses keyed by prompt hash. Keeps runs offline and reproducible."""
 
-    model = "replay"
-
     def __init__(self, fixtures_dir: str | Path) -> None:
         self.dir = Path(fixtures_dir)
+        #: the model named by the last replayed recording, so provenance matches the live run
+        self.model = "replay"
 
     def complete(self, prompt: str) -> str:
         key = prompt_key(prompt)
@@ -132,6 +139,7 @@ class ReplayLLMClient:
         if not path.exists():
             raise LLMReplayMissing(f"no recorded response for prompt {key} in {self.dir}")
         data = json.loads(path.read_text(encoding="utf-8"))
+        self.model = str(data.get("model") or "replay")
         return str(data["response"])
 
 
@@ -167,8 +175,12 @@ class LLMExtractor:
     def __init__(self, client: LLMClient, ontology: Ontology) -> None:
         self.client = client
         self.ontology = ontology
-        template_hash = hashlib.sha256(PROMPT_TEMPLATE.encode()).hexdigest()[:8]
-        self.id = f"llm:{client.model}@{template_hash}"
+        self.template_hash = hashlib.sha256(PROMPT_TEMPLATE.encode()).hexdigest()[:8]
+
+    @property
+    def id(self) -> str:
+        """Read after ``complete``: a replay client only learns the recorded model then."""
+        return f"llm:{self.client.model}@{self.template_hash}"
 
     def prompt(self, source: Source) -> str:
         onto = self.ontology
@@ -185,7 +197,9 @@ class LLMExtractor:
             if not isinstance(items, list):
                 raise TypeError("assertions is not a list")
         except (ValueError, KeyError, TypeError) as e:
-            return ExtractionResult([], [{"error": f"unparseable LLM output: {e}"}], raw)
+            return ExtractionResult(
+                [], [{"error": f"unparseable LLM output: {e}"}], raw, failed=True
+            )
         out: list[Candidate] = []
         invalid: list[dict[str, Any]] = []
         for i, item in enumerate(items):
