@@ -87,6 +87,10 @@ def test_record_then_replay_gives_the_same_candidates(engine, tmp_path) -> None:
     assert saved["model"] == "claude-opus-5-5"
     replayed = LLMExtractor(ReplayLLMClient(tmp_path), engine.ontology).extract(src)
     assert [c.key() for c in replayed.candidates] == [c.key() for c in recorded.candidates]
+    # provenance is the same whether the answer was live or replayed
+    assert {c.extracted_by for c in replayed.candidates} == {
+        c.extracted_by for c in recorded.candidates
+    }
 
 
 def test_failed_live_call_rolls_back_the_ingest(engine) -> None:  # type: ignore[no-untyped-def]
