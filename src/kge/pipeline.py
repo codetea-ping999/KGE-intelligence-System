@@ -50,6 +50,14 @@ def auto_policy(extracted_by: str, report: ValidationReport) -> tuple[Decision, 
     return "accept", "clean candidate from deterministic extractor"
 
 
+def _same_claim(old: Candidate, new: Candidate) -> bool:
+    """Whether a restated candidate says what the earlier one did: same statement, same
+    epistemic type, same quoted evidence (line numbers may shift between versions)."""
+    return old.epistemic_type is new.epistemic_type and [e.quote for e in old.evidence] == [
+        e.quote for e in new.evidence
+    ]
+
+
 def accept_op(sc: StagedCandidate, report: ValidationReport, approved_by: str) -> Op:
     c = sc.candidate
     if report.duplicate_of:
@@ -187,11 +195,16 @@ class Engine:
 
         # Incremental update: only what changed relative to the previous version is staged.
         live = self._live(src.id, extractor.id) if prev else {}
-        new_keys = {c.key() for c in extraction.candidates}
+        restated: dict[tuple[str, ...], Candidate] = {}
+        for c in extraction.candidates:
+            restated.setdefault(c.key(), c)
         gone = f"no longer stated in {src.id} v{src.version}"
         withdrawn: list[str] = []
+        kept: set[tuple[str, ...]] = set()
         for key, sc in live.items():
-            if key in new_keys:
+            new = restated.get(key)
+            if new is not None and _same_claim(sc.candidate, new):
+                kept.add(key)
                 continue
             if sc.state is CandidateState.PENDING:
                 self.store.decide(sc.id, CandidateState.OBSOLETE, actor, gone)
@@ -212,7 +225,7 @@ class Engine:
         batch: list[Candidate] = []
         seen: set[tuple[str, ...]] = set()
         for cand in extraction.candidates:
-            if cand.key() in live or cand.key() in seen:
+            if cand.key() in kept or cand.key() in seen:
                 result.unchanged += 1  # already known, or stated twice in this version
                 continue
             seen.add(cand.key())
@@ -232,8 +245,9 @@ class Engine:
                 staged = self.store.get_candidate(cid)
                 assert staged is not None
                 promoted = [h for h in report.supersedes if h not in excluded]
-                ops += retract_ops(self.store, promoted, f"verified by {cid}", Status.SUPERSEDED)
-                excluded.update(promoted)
+                rs = retract_ops(self.store, promoted, f"verified by {cid}", Status.SUPERSEDED)
+                ops += rs
+                excluded.update(r.assertion_id for r in rs)  # dependents go with them
                 ops.append(accept_op(staged, report, AUTO))
                 result.accepted.append(cid)
 

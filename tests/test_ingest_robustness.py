@@ -167,3 +167,68 @@ def test_rejected_candidate_does_not_count_against_later_ones(engine) -> None:  
         ],
     )
     assert len(r.rejected) == 1 and len(r.accepted) == 1 and r.pending == []
+
+
+def test_hypothesis_does_not_prop_up_a_fact(engine) -> None:  # type: ignore[no-untyped-def]
+    engine.ingest("doc", "Acme社は日本に所在する。\n", rule(engine))
+    [fact] = _located(engine)
+    ingest_specs(
+        engine,
+        "memo",
+        "Acme社は日本にあるらしい。",
+        lambda s: [
+            cand(s, "Acme社", "located_in", "日本", etype=EpistemicType.HYPOTHESIS, quote="")
+        ],
+    )
+    assert {a.epistemic_type for a in _located(engine)} == {
+        EpistemicType.FACT,
+        EpistemicType.HYPOTHESIS,
+    }
+    assert {ev.source_id for ev in fact.evidence} == {
+        ev.source_id
+        for ev in engine.store.get_assertion(fact.id).evidence  # type: ignore[union-attr]
+    }
+    engine.ingest("doc", "# 空\n", rule(engine))  # the only factual source withdraws
+    [left] = _located(engine)
+    assert left.epistemic_type is EpistemicType.HYPOTHESIS  # the fact did not survive on a guess
+
+
+def test_fact_replacing_a_chain_of_inferences(engine) -> None:  # type: ignore[no-untyped-def]
+    engine.ingest("doc", DOC + "日本はアジアに属する。\n", rule(engine))
+    [region] = engine.store.active(predicate="works_in_region")
+    r = ingest_specs(
+        engine,
+        "hr",
+        "人事記録: 田中アリスの勤務国は日本、勤務地域はアジア。",
+        lambda s: [
+            cand(s, "田中アリス", "works_in_country", "日本", valid_from="2019-04-01"),
+            cand(s, "田中アリス", "works_in_region", "アジア", valid_from="2019-04-01"),
+        ],
+    )
+    assert len(r.accepted) == 2
+    assert engine.store.get_assertion(region.id).status is not Status.ACCEPTED  # type: ignore[union-attr]
+    facts = engine.store.active(predicate="works_in_region")
+    assert [a.epistemic_type for a in facts] == [EpistemicType.FACT]
+
+
+def test_conflicting_candidate_cannot_be_committed(engine) -> None:  # type: ignore[no-untyped-def]
+    engine.ingest("doc", "Acme社は日本に所在する。\n", rule(engine))
+    r = engine.ingest("other", "Acme社はドイツに所在する。\n", rule(engine))
+    [cid] = r.pending
+    sc = engine.store.get_candidate(cid)
+    assert sc is not None and sc.report is not None and sc.report.conflicts_with
+    with pytest.raises(UnauthorizedCommit, match="conflicts"):
+        engine.store.commit(
+            "human:alice", "bypass review", [accept_op(sc, sc.report, "human:alice")]
+        )
+
+
+def test_restatement_with_a_new_epistemic_type_is_restaged(engine) -> None:  # type: ignore[no-untyped-def]
+    def build(etype: EpistemicType):  # type: ignore[no-untyped-def]
+        return lambda s: [cand(s, "Acme社", "located_in", "日本", etype=etype)]
+
+    # same quote both times; only the epistemic type changes
+    ingest_specs(engine, "memo", "Acme社は日本にある。\n未確認\n", build(EpistemicType.HYPOTHESIS))
+    r = ingest_specs(engine, "memo", "Acme社は日本にある。\n確認済み\n", build(EpistemicType.FACT))
+    assert r.unchanged == 0 and len(r.obsolete) == 1
+    assert [a.epistemic_type for a in _located(engine)] == [EpistemicType.FACT]
