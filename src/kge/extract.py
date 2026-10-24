@@ -16,11 +16,17 @@ from kge.models import Candidate, EntityRef, EpistemicType, Evidence, LiteralVal
 from kge.ontology import Ontology
 
 
+class ExtractionFailed(Exception):
+    """The extractor could not read its input; the ingestion is rolled back."""
+
+
 @dataclass
 class ExtractionResult:
     candidates: list[Candidate]
     invalid: list[dict[str, Any]] = field(default_factory=list)
     raw_output: str | None = None
+    #: the extractor could not read its input at all (as opposed to finding nothing in it)
+    failed: bool = False
 
 
 class Extractor(Protocol):
@@ -189,7 +195,9 @@ class LLMExtractor:
             if not isinstance(items, list):
                 raise TypeError("assertions is not a list")
         except (ValueError, KeyError, TypeError) as e:
-            return ExtractionResult([], [{"error": f"unparseable LLM output: {e}"}], raw)
+            return ExtractionResult(
+                [], [{"error": f"unparseable LLM output: {e}"}], raw, failed=True
+            )
         out: list[Candidate] = []
         invalid: list[dict[str, Any]] = []
         for i, item in enumerate(items):

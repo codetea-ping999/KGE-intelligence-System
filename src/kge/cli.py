@@ -14,6 +14,7 @@ from kge import audit, demo, qa
 from kge.clock import clock_from_env
 from kge.export import DEFAULT_BASE, to_turtle
 from kge.extract import (
+    ExtractionFailed,
     Extractor,
     LLMClient,
     LLMExtractor,
@@ -330,7 +331,14 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return int(args.func(args))
-    except (ReviewError, UnauthorizedCommit, KeyError, LLMReplayMissing, LLMError) as exc:
+    except (
+        ReviewError,
+        UnauthorizedCommit,
+        KeyError,
+        ExtractionFailed,
+        LLMReplayMissing,
+        LLMError,
+    ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 

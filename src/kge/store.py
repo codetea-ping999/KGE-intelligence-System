@@ -507,6 +507,36 @@ class Store:
         ).fetchone()
         return self._staged(row) if row else None
 
+    def withdraw_candidate(self, cid: str, by: str, reason: str) -> None:
+        """An accepted candidate whose source no longer states it. The assertion it produced
+        keeps its other support; see ``supporting_candidates``."""
+        with self.transaction() as c:
+            sc = self.get_candidate(cid)
+            if sc is None:
+                raise KeyError(cid)
+            if sc.state is not CandidateState.ACCEPTED:
+                raise UnauthorizedCommit(f"candidate {cid} is {sc.state.value}, not accepted")
+            now = self.clock.now()
+            c.execute(
+                "UPDATE candidates SET state=?, reason=?, decided_at=? WHERE id=?",
+                (CandidateState.OBSOLETE.value, reason, now.isoformat(), cid),
+            )
+            audit.append(
+                c,
+                now,
+                by,
+                "candidate_withdrawn",
+                {"candidate_id": cid, "assertion_id": sc.assertion_id, "reason": reason},
+            )
+
+    def supporting_candidates(self, assertion_id: str) -> list[str]:
+        """Accepted candidates (from any source) that still state this assertion."""
+        rows = self.conn.execute(
+            "SELECT id FROM candidates WHERE assertion_id=? AND state=? ORDER BY id",
+            (assertion_id, CandidateState.ACCEPTED.value),
+        )
+        return [r[0] for r in rows]
+
     def candidates(
         self,
         state: CandidateState | None = None,
@@ -634,10 +664,14 @@ class Store:
             upto = changeset
         else:
             assert at is not None
+            # stored times are UTC ISO strings, so the cut-off must be too for the text
+            # comparison to be chronological (a naive time is read as UTC)
+            when = (at if at.tzinfo else at.replace(tzinfo=dt.UTC)).astimezone(dt.UTC)
+            iso = when.isoformat()
             sql = self._AV_SELECT + " WHERE tx_from<=? AND (tx_to IS NULL OR tx_to>?)"
-            args = [at.isoformat(), at.isoformat()]
+            args = [iso, iso]
             row = self.conn.execute(
-                "SELECT MAX(id) FROM changesets WHERE created_at<=?", (at.isoformat(),)
+                "SELECT MAX(id) FROM changesets WHERE created_at<=?", (iso,)
             ).fetchone()
             upto = row[0] or 0
         sql += " AND status='accepted'"
@@ -728,7 +762,9 @@ class Store:
             )
             return result
 
-    def _check_candidate(self, cid: str | None, extracted_by: str, approved_by: str) -> None:
+    def _check_candidate(
+        self, cid: str | None, extracted_by: str, approved_by: str, op: _Op | None = None
+    ) -> None:
         if cid is None:
             return
         sc = self.get_candidate(cid)
@@ -744,6 +780,29 @@ class Store:
             raise UnauthorizedCommit(f"candidate {cid}: extractor mismatch")
         if is_llm_actor(extracted_by) and not is_human_actor(approved_by):
             raise UnauthorizedCommit(f"candidate {cid}: LLM output requires human approval")
+        # the operation must say exactly what was validated, not an edited copy of it
+        c, rep = sc.candidate, sc.report
+        if isinstance(op, AddAssertion):
+            same = (
+                op.subject == c.subject
+                and op.predicate == c.predicate
+                and op.object == c.object
+                and (op.valid_from, op.valid_to) == (c.valid_from, c.valid_to)
+                and op.evidence == c.evidence
+                and op.confidence_method == c.confidence_method
+                and op.epistemic_type is rep.effective_type
+                and op.confidence == rep.effective_confidence
+                and rep.duplicate_of is None
+            )
+            if not same:
+                raise UnauthorizedCommit(
+                    f"candidate {cid}: operation differs from what was validated"
+                )
+        elif isinstance(op, AddEvidence):
+            if op.assertion_id != rep.duplicate_of or op.evidence != c.evidence:
+                raise UnauthorizedCommit(
+                    f"candidate {cid}: operation differs from what was validated"
+                )
 
     def _apply_add(self, op: AddAssertion, cs: int, now: dt.datetime) -> str:
         if op.candidate_id is None:
@@ -765,7 +824,7 @@ class Store:
         else:
             if op.epistemic_type is EpistemicType.INFERENCE:
                 raise UnauthorizedCommit("inferences can only be produced by the reasoner")
-            self._check_candidate(op.candidate_id, op.extracted_by, op.approved_by)
+            self._check_candidate(op.candidate_id, op.extracted_by, op.approved_by, op)
         pdef = self.ontology.predicates.get(op.predicate)
         if pdef is None:
             raise UnauthorizedCommit(f"unknown predicate {op.predicate}")
@@ -862,7 +921,7 @@ class Store:
         if op.candidate_id:
             sc = self.get_candidate(op.candidate_id)
             assert sc is not None
-            self._check_candidate(op.candidate_id, sc.candidate.extracted_by, op.approved_by)
+            self._check_candidate(op.candidate_id, sc.candidate.extracted_by, op.approved_by, op)
         for ev in op.evidence:
             self._insert_evidence(a.id, ev, cs)
         if op.candidate_id:
