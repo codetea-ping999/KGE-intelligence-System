@@ -10,6 +10,7 @@ import pytest
 from conftest import ROOT
 from kge.clock import DEFAULT_FIXED_START, FixedClock
 from kge.datasets import HEADER, DatasetExtractor, parse
+from kge.extract import ExtractionFailed
 from kge.models import CandidateState, SourceKind
 from kge.pipeline import Engine
 from kge.qa import checks
@@ -122,13 +123,14 @@ def test_new_houjin_snapshot_is_an_incremental_update(e: Engine) -> None:
 def test_malformed_input_is_reported_not_imported(e: Engine) -> None:
     with pytest.raises(houjin.MalformedCSV, match="expected 30 columns"):
         houjin.convert("1,9000000000009,too,few,columns\n")
-    r = e.ingest(
-        "bad",
-        HEADER + "\nonly\tthree\tfields\n",
-        DatasetExtractor(e.ontology, e.store, "import:test"),
-        kind=SourceKind.DATASET,
-    )
-    assert r.invalid == 1 and r.staged == []
+    with pytest.raises(ExtractionFailed, match="expected"):
+        e.ingest(
+            "bad",
+            HEADER + "\nonly\tthree\tfields\n",
+            DatasetExtractor(e.ontology, e.store, "import:test"),
+            kind=SourceKind.DATASET,
+        )
+    assert e.store.candidates() == []
     with pytest.raises(ValueError, match="not a kge dataset"):
         parse("hello")
 
@@ -229,3 +231,53 @@ def test_referenced_parent_keeps_its_corporate_number() -> None:
     rows, _ = parse(wikidata.convert(json.dumps({"results": {"bindings": [binding]}})))
     numbered = {(r.s_key, r.o_value) for _, r in rows if r.predicate == "corporate_number"}
     assert (f"corporate_number:{B}", B) in numbered
+
+
+def _with(cells_for_b: dict[int, str]) -> str:
+    """The v1 CSV with some cells of corporation B's first row replaced."""
+    lines = _read("houjin_synthetic_v1.csv").splitlines(keepends=True)
+    i = next(i for i, ln in enumerate(lines) if B in ln)
+    cells = lines[i].rstrip("\n").split(",")
+    for col, value in cells_for_b.items():
+        cells[col] = value
+    lines[i] = ",".join(cells) + "\n"
+    return "".join(lines)
+
+
+def test_invalid_date_aborts_the_conversion(e: Engine) -> None:
+    _import(e, "houjin", "houjin_synthetic_v1.csv", "houjin")
+    before = len(e.store.active())
+    bad = _with({houjin.COLUMNS.index("changeDate"): "2015-13-05"})
+    with pytest.raises(houjin.MalformedCSV, match="invalid date in changeDate"):
+        houjin.convert(bad)
+    assert len(e.store.active()) == before  # nothing was withdrawn
+
+
+def test_bad_date_in_a_canonical_dataset_fails_the_extraction(e: Engine) -> None:
+    content = houjin.convert(_read("houjin_synthetic_v1.csv"))
+    e.ingest("h", content, DatasetExtractor(e.ontology, e.store, "import:houjin-bangou"),
+             kind=SourceKind.DATASET)  # fmt: skip
+    before = sorted(a.id for a in e.store.active())
+    rows = content.splitlines(keepends=True)
+    i = next(i for i, ln in enumerate(rows) if ln.count("\t") == 9 and ln.split("\t")[7])
+    cells = rows[i].split("\t")
+    cells[7] = "2015-13-05"  # valid_from
+    rows[i] = "\t".join(cells)
+    with pytest.raises(ExtractionFailed):
+        e.ingest("h", "".join(rows), DatasetExtractor(e.ontology, e.store, "import:houjin-bangou"),
+                 kind=SourceKind.DATASET)  # fmt: skip
+    assert sorted(a.id for a in e.store.active()) == before
+
+
+def test_sequence_number_breaks_ties_numerically() -> None:
+    seq, date = houjin.COLUMNS.index("sequenceNumber"), houjin.COLUMNS.index("changeDate")
+    lines = [ln for ln in _read("houjin_synthetic_v1.csv").splitlines() if A in ln][:2]
+    assert len(lines) == 2
+    first, second = (ln.split(",") for ln in lines)
+    first[seq], second[seq] = "9", "10"
+    first[date] = second[date] = "2020-01-01"
+    rows = parse(houjin.convert(",".join(first) + "\n" + ",".join(second) + "\n"))[0]
+    name = houjin.COLUMNS.index("name")
+    assert first[name] != second[name]
+    labels = {r.s_label for _, r in rows if r.s_key == f"corporate_number:{A}"}
+    assert labels == {second[name]}  # the higher sequence number is the latest snapshot

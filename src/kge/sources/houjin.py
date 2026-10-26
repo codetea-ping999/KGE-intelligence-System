@@ -59,6 +59,17 @@ COLUMNS = [
 COMPANY_KINDS = {"301", "302", "303", "304", "305"}  # 株式会社, 有限会社, 合名, 合資, 合同
 
 
+DATE_COLUMNS = ("updateDate", "changeDate", "closeDate", "assignmentDate")
+
+
+def _is_date(value: str) -> bool:
+    try:
+        dt.date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
 def _day_before(iso: str) -> str:
     return (dt.date.fromisoformat(iso) - dt.timedelta(days=1)).isoformat()
 
@@ -82,6 +93,13 @@ def convert(csv_text: str) -> str:
         if not (rec["corporateNumber"].isdigit() and len(rec["corporateNumber"]) == 13):
             errors.append(f"row {n}: invalid corporate number")
             continue
+        if not rec["sequenceNumber"].isdigit():
+            errors.append(f"row {n}: invalid sequence number")
+            continue
+        bad = [c for c in DATE_COLUMNS if rec[c] and not _is_date(rec[c])]
+        if bad:
+            errors.append(f"row {n}: invalid date in {', '.join(bad)}")
+            continue
         if rec["hihyoji"] == "1":
             skipped.append(f"row {n}: excluded from search (hihyoji)")
             continue
@@ -91,7 +109,7 @@ def convert(csv_text: str) -> str:
 
     rows: list[Row] = []
     for number, recs in sorted(records.items()):
-        recs.sort(key=lambda r: (r["changeDate"] or r["assignmentDate"], r["sequenceNumber"]))
+        recs.sort(key=lambda r: (r["changeDate"] or r["assignmentDate"], int(r["sequenceNumber"])))
         latest = recs[-1]
         stype = "Company" if latest["kind"] in COMPANY_KINDS else "Organization"
         subject = dict(s_key=f"corporate_number:{number}", s_label=latest["name"], s_type=stype)

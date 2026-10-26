@@ -177,4 +177,5 @@ class DatasetExtractor:
                 )
             except ValueError as e:
                 invalid.append({"line": n, "error": str(e).splitlines()[0]})
-        return ExtractionResult(out, invalid)
+        # a dataset is complete or unusable: a skipped line would read as a deletion
+        return ExtractionResult(out, invalid, failed=bool(invalid))
