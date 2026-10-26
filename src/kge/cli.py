@@ -12,7 +12,17 @@ from pathlib import Path
 
 from kge import audit, demo, qa
 from kge.clock import clock_from_env
-from kge.extract import ExtractionFailed, Extractor, LLMExtractor, ReplayLLMClient, RuleExtractor
+from kge.export import DEFAULT_BASE, to_turtle
+from kge.extract import (
+    ExtractionFailed,
+    Extractor,
+    LLMClient,
+    LLMExtractor,
+    LLMReplayMissing,
+    ReplayLLMClient,
+    RuleExtractor,
+)
+from kge.llm_claude import LLMError
 from kge.models import Assertion, CandidateState
 from kge.pipeline import Engine, ReviewError
 from kge.store import UnauthorizedCommit
@@ -38,7 +48,16 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     if args.extractor == "rule":
         extractor = RuleExtractor(e.ontology)
     else:
-        extractor = LLMExtractor(ReplayLLMClient(args.llm_fixtures), e.ontology)
+        client: LLMClient
+        if args.llm == "claude":
+            from kge.llm_claude import ClaudeLLMClient, RecordingLLMClient  # needs extra
+
+            client = ClaudeLLMClient(model=args.model, effort=args.effort)
+            if args.record:
+                client = RecordingLLMClient(client, args.llm_fixtures)
+        else:
+            client = ReplayLLMClient(args.llm_fixtures)
+        extractor = LLMExtractor(client, e.ontology)
     path = Path(args.path)
     r = e.ingest(args.uri or path.as_posix(), path.read_text(encoding="utf-8"), extractor)
     print(demo._summary(r))
@@ -194,7 +213,17 @@ def cmd_demo(args: argparse.Namespace) -> int:
 
 
 def cmd_export(args: argparse.Namespace) -> int:
-    _print_json(qa.export_snapshot(_engine(args).store))
+    store = _engine(args).store
+    if args.format == "json":
+        text = json.dumps(qa.export_snapshot(store), ensure_ascii=False, indent=2, default=str)
+        text += "\n"
+    else:
+        text = to_turtle(store, base=args.base, include_history=not args.active_only)
+    if args.out:
+        Path(args.out).write_text(text, encoding="utf-8")
+        print(f"wrote {args.out}")
+    else:
+        sys.stdout.write(text)
     return 0
 
 
@@ -207,6 +236,19 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("ingest", help="extract candidates from a document and validate them")
     s.add_argument("path")
     s.add_argument("--extractor", choices=["rule", "llm"], default="rule")
+    s.add_argument(
+        "--llm",
+        choices=["replay", "claude"],
+        default="replay",
+        help="replay recorded responses (default) or call the Claude API",
+    )
+    s.add_argument("--model", default="claude-opus-5-5")
+    s.add_argument("--effort", default="medium", choices=["low", "medium", "high", "xhigh", "max"])
+    s.add_argument(
+        "--record",
+        action="store_true",
+        help="with --llm claude: save responses to --llm-fixtures for replay",
+    )
     s.add_argument("--llm-fixtures", default="fixtures/llm")
     s.add_argument("--uri")
     s.set_defaults(func=cmd_ingest)
@@ -274,7 +316,14 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--db", default="build/demo.db")
     s.set_defaults(func=cmd_demo)
 
-    sub.add_parser("export", help="print accepted knowledge as JSON").set_defaults(func=cmd_export)
+    s = sub.add_parser("export", help="export knowledge as JSON or RDF Turtle (PROV-O)")
+    s.add_argument("--format", choices=["json", "turtle"], default="json")
+    s.add_argument("--base", default=DEFAULT_BASE, help="base IRI for turtle output")
+    s.add_argument(
+        "--active-only", action="store_true", help="turtle: omit retracted/superseded assertions"
+    )
+    s.add_argument("--out", help="write to a file instead of stdout")
+    s.set_defaults(func=cmd_export)
     return p
 
 
@@ -282,7 +331,14 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return int(args.func(args))
-    except (ReviewError, UnauthorizedCommit, KeyError, ExtractionFailed) as exc:
+    except (
+        ReviewError,
+        UnauthorizedCommit,
+        KeyError,
+        ExtractionFailed,
+        LLMReplayMissing,
+        LLMError,
+    ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
