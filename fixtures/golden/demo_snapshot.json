@@ -105,19 +105,6 @@
   },
   {
     "subject": "佐藤ボブ",
-    "predicate": "works_in_region",
-    "object": "ヨーロッパ",
-    "type": "inference",
-    "confidence": 0.6318,
-    "valid_from": "2023-01-01",
-    "valid_to": null,
-    "extracted_by": "reasoner:R2_work_region",
-    "approved_by": "policy:reasoner",
-    "evidence": 0,
-    "rule": "R2_work_region"
-  },
-  {
-    "subject": "佐藤ボブ",
     "predicate": "works_in_country",
     "object": "ドイツ",
     "type": "inference",
@@ -144,32 +131,6 @@
   },
   {
     "subject": "佐藤ボブ",
-    "predicate": "works_in_region",
-    "object": "ヨーロッパ",
-    "type": "inference",
-    "confidence": 0.8574,
-    "valid_from": "2020-01-01",
-    "valid_to": "2022-12-31",
-    "extracted_by": "reasoner:R2_work_region",
-    "approved_by": "policy:reasoner",
-    "evidence": 0,
-    "rule": "R2_work_region"
-  },
-  {
-    "subject": "田中アリス",
-    "predicate": "works_in_region",
-    "object": "ヨーロッパ",
-    "type": "inference",
-    "confidence": 0.8574,
-    "valid_from": "2019-04-01",
-    "valid_to": null,
-    "extracted_by": "reasoner:R2_work_region",
-    "approved_by": "policy:reasoner",
-    "evidence": 0,
-    "rule": "R2_work_region"
-  },
-  {
-    "subject": "佐藤ボブ",
     "predicate": "works_in_country",
     "object": "ドイツ",
     "type": "inference",
@@ -193,6 +154,32 @@
     "approved_by": "policy:reasoner",
     "evidence": 0,
     "rule": "R1_work_country"
+  },
+  {
+    "subject": "Acme社",
+    "predicate": "located_in_region",
+    "object": "ヨーロッパ",
+    "type": "inference",
+    "confidence": 0.9025,
+    "valid_from": null,
+    "valid_to": null,
+    "extracted_by": "reasoner:R3_org_region",
+    "approved_by": "policy:reasoner",
+    "evidence": 0,
+    "rule": "R3_org_region"
+  },
+  {
+    "subject": "Beta社",
+    "predicate": "located_in_region",
+    "object": "ヨーロッパ",
+    "type": "inference",
+    "confidence": 0.9025,
+    "valid_from": null,
+    "valid_to": null,
+    "extracted_by": "reasoner:R3_org_region",
+    "approved_by": "policy:reasoner",
+    "evidence": 0,
+    "rule": "R3_org_region"
   },
   {
     "subject": "Beta社",

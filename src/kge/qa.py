@@ -18,6 +18,7 @@ from kge.models import (
     is_llm_actor,
     max_concurrent,
 )
+from kge.ontology import Ontology, literal_ok
 from kge.store import Store
 
 
@@ -85,6 +86,48 @@ def metrics(store: Store, now: dt.datetime) -> dict[str, Any]:
     }
 
 
+def schema_problem(store: Store, onto: Ontology, a: Assertion) -> str | None:
+    """Why ``a`` does not conform to ``onto`` (None when it does)."""
+    pdef = onto.predicates.get(a.predicate)
+    if pdef is None:
+        return f"predicate {a.predicate} is not defined"
+    subj = store.get_entity(a.subject)
+    if subj is None or not onto.conforms(subj.types, pdef.domain):
+        types = "/".join(subj.types) if subj else "missing"
+        return f"subject is {types}, not {pdef.domain}"
+    if pdef.literal_range:
+        if a.object_kind != "literal" or a.object_datatype != pdef.range:
+            return f"object is not a {pdef.range} literal"
+        if not literal_ok(pdef.range, a.object_value):
+            return f"{a.object_value!r} is not a valid {pdef.range}"
+        return None
+    obj = store.get_entity(a.object_value) if a.object_kind == "entity" else None
+    if obj is None or not onto.conforms(obj.types, pdef.range):
+        types = "/".join(obj.types) if obj else a.object_kind
+        return f"object is {types}, not {pdef.range}"
+    return None
+
+
+def cardinality_violations(onto: Ontology, active: list[Assertion]) -> list[str]:
+    """Assertions that, together with others holding at the same time, exceed the number of
+    values their predicate allows per subject."""
+    by_sp: dict[tuple[str, str], list[Assertion]] = {}
+    for a in active:
+        pdef = onto.predicates.get(a.predicate)
+        if pdef and pdef.cardinality_limit is not None:
+            by_sp.setdefault((a.subject, a.predicate), []).append(a)
+    out = []
+    for (_, pred), group in by_sp.items():
+        limit = onto.predicates[pred].cardinality_limit
+        assert limit is not None
+        spans = [(y.object_value, y.valid_from, y.valid_to) for y in group]
+        for x in group:
+            # distinct values holding together on some day while x holds
+            if max_concurrent(spans, (x.valid_from, x.valid_to)) > limit:
+                out.append(x.id)
+    return out
+
+
 def checks(store: Store) -> list[Check]:
     out = []
     v = audit.verify(store.conn)
@@ -122,35 +165,18 @@ def checks(store: Store) -> list[Check]:
     ]
     out.append(Check("llm_output_human_approved", not unapproved, ", ".join(unapproved)))
 
-    conflicts = []
-    by_sp: dict[tuple[str, str], list[Assertion]] = {}
-    for a in active:
-        pdef = store.ontology.predicates.get(a.predicate)
-        if pdef and pdef.cardinality_limit is not None:
-            by_sp.setdefault((a.subject, a.predicate), []).append(a)
-    for (_, pred), group in by_sp.items():
-        limit = store.ontology.predicates[pred].cardinality_limit
-        assert limit is not None
-        spans = [(y.object_value, y.valid_from, y.valid_to) for y in group]
-        for x in group:
-            # distinct values holding together on some day while x holds
-            if max_concurrent(spans, (x.valid_from, x.valid_to)) > limit:
-                conflicts.append(x.id)
+    conflicts = cardinality_violations(store.ontology, active)
     out.append(Check("no_active_conflicts", not conflicts, ", ".join(conflicts)))
 
-    schema = []
-    for a in active:
-        pdef = store.ontology.predicates.get(a.predicate)
-        subj = store.get_entity(a.subject)
-        onto = store.ontology
-        if pdef is None or subj is None or not onto.conforms(subj.types, pdef.domain):
-            schema.append(a.id)
-            continue
-        if not pdef.literal_range:
-            obj = store.get_entity(a.object_value)
-            if obj is None or not onto.conforms(obj.types, pdef.range):
-                schema.append(a.id)
+    schema = [a.id for a in active if schema_problem(store, store.ontology, a)]
     out.append(Check("schema_conformance", not schema, ", ".join(schema)))
+
+    versions = store.ontology_versions()
+    in_sync = bool(versions) and versions[-1].content_hash == store.ontology.content_hash()
+    detail = f"v{versions[-1].version}" if versions else "no ontology recorded"
+    if store.pending_ontology is not None:
+        in_sync, detail = False, detail + "; a changed ontology is waiting to be applied"
+    out.append(Check("ontology_versioned", in_sync, detail))
     return out
 
 

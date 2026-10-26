@@ -86,10 +86,28 @@ def to_turtle(store: Store, base: str = DEFAULT_BASE, include_history: bool = Tr
 
     # schema: the ontology as OWL 2 (classes, hierarchy, property characteristics)
     onto = store.ontology
-    w.node(
-        f"<{base}ontology>",
-        [("a", "owl:Ontology"), ("rdfs:label", _lit("KGE ontology"))],
-    )
+    versions = store.ontology_versions()
+    current = versions[-1]
+    ont_pairs = [
+        ("a", "owl:Ontology"),
+        ("rdfs:label", _lit("KGE ontology")),
+        ("owl:versionInfo", _lit(f"v{current.version}")),
+        ("owl:versionIRI", f"<{base}ontology/v{current.version}>"),
+    ]
+    if current.version > 1:
+        ont_pairs.append(("owl:priorVersion", f"<{base}ontology/v{current.version - 1}>"))
+    w.node(f"<{base}ontology>", ont_pairs)
+    for v in versions:  # each version is itself a provenance entity
+        pairs = [
+            ("a", "prov:Entity"),
+            ("kgs:contentHash", _lit(v.content_hash)),
+            ("prov:generatedAtTime", _dt(v.recorded_at)),
+            ("prov:wasAttributedTo", f"kge:agent_{_local(v.actor)}"),
+            ("rdfs:comment", _lit(v.reason)),
+        ]
+        if v.version > 1:
+            pairs.append(("prov:wasRevisionOf", f"<{base}ontology/v{v.version - 1}>"))
+        w.node(f"<{base}ontology/v{v.version}>", pairs)
     for name, t in sorted(onto.entity_types.items()):
         pairs = [("a", "owl:Class"), ("rdfs:label", _lit(name))]
         if t.subclass_of:
@@ -170,7 +188,7 @@ def to_turtle(store: Store, base: str = DEFAULT_BASE, include_history: bool = Tr
             pairs.append(("prov:wasRevisionOf", f"kge:{sid}_v{version - 1}"))
         w.node(f"kge:{sid}_v{version}", pairs)
 
-    agents: set[str] = set()
+    agents: set[str] = {v.actor for v in versions}
     for cs in store.changesets():
         agents.add(cs.author)
         pairs = [

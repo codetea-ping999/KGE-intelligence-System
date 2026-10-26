@@ -24,7 +24,8 @@ demo:
 	$(RUN) kge demo --db build/demo.db
 
 qa: demo
-	$(RUN) kge --db build/demo.db qa
+	# the demo ends by migrating to ontology v2, so that is the ontology its database uses
+	$(RUN) kge --db build/demo.db --ontology fixtures/ontology/base_v2.yaml qa
 
 # Runs the reference scenario twice and requires byte-identical output.
 repro:

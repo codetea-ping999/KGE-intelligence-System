@@ -10,7 +10,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from kge import audit, demo, qa
+from kge import audit, demo, ontology_change, qa
 from kge.clock import clock_from_env
 from kge.export import DEFAULT_BASE, to_turtle
 from kge.extract import (
@@ -26,13 +26,13 @@ from kge.llm_claude import LLMError
 from kge.models import Assertion, CandidateState
 from kge.ontology import Ontology
 from kge.pipeline import Engine, ReviewError
-from kge.store import UnauthorizedCommit
+from kge.store import OntologyMismatch, UnauthorizedCommit
 from kge.versioning import diff
 
 
-def _engine(args: argparse.Namespace) -> Engine:
+def _engine(args: argparse.Namespace, allow_ontology_change: bool = False) -> Engine:
     Path(args.db).parent.mkdir(parents=True, exist_ok=True)
-    return Engine.open(args.db, args.ontology, clock_from_env())
+    return Engine.open(args.db, args.ontology, clock_from_env(), allow_ontology_change)
 
 
 def _fmt(e: Engine, a: Assertion) -> str:
@@ -179,7 +179,7 @@ def cmd_audit(args: argparse.Namespace) -> int:
 def cmd_qa(args: argparse.Namespace) -> int:
     reports = []
     if Path(args.db).exists():
-        e = _engine(args)
+        e = _engine(args, allow_ontology_change=True)  # a mismatch is reported, not fatal
         reports.append(("database " + args.db, qa.run(e.store, e.store.clock.now())))
     # Golden regression: rerun the reference scenario from scratch and compare.
     with tempfile.TemporaryDirectory() as tmp:
@@ -229,8 +229,76 @@ def cmd_export(args: argparse.Namespace) -> int:
 
 
 def cmd_ontology(args: argparse.Namespace) -> int:
+    if args.action == "show":
+        return _show_ontology(Ontology.load(args.ontology))
+    e = _engine(args, allow_ontology_change=True)
+    if args.action == "log":
+        for v in e.store.ontology_versions():
+            print(
+                f"v{v.version}  after changeset {v.after_changeset}  {v.recorded_at.isoformat()}"
+                f"  {v.actor}  {v.content_hash[:12]}  {v.reason}"
+            )
+        if e.store.pending_ontology is not None:
+            print(f"pending: {args.ontology} differs from the ontology in effect")
+        return 0
+    if args.action == "diff":
+        if len(args.versions) != 2:
+            print("error: ontology diff needs two versions, e.g. 'kge ontology diff 1 2'")
+            return 2
+        a, b = (e.store.ontology_version(v) for v in args.versions)
+        for c in ontology_change.diff_ontologies(a, b):
+            print(c)
+        return 0
+    new = Ontology.load(args.ontology)
+    if args.action == "plan":
+        p = ontology_change.plan(e, new)
+        _print_plan(e, p)
+        return 0
+    if not args.actor or not args.reason:
+        print("error: ontology apply needs --actor and --reason")
+        return 2
+    r = ontology_change.apply(e, new, args.actor, args.reason, args.retract_invalid)
+    _print_plan(e, r.plan)
+    print(
+        f"applied ontology v{r.version}: retracted {len(r.retracted)}, derived {len(r.derived)},"
+        f" changesets {r.changesets}"
+    )
+    return 0
+
+
+def _print_plan(e: Engine, p: ontology_change.OntologyPlan) -> None:
+    if p.empty:
+        print(f"no changes: v{e.store.ontology_versions()[-1].version} is up to date")
+        return
+    print(f"changes against v{p.from_version}:")
+    for c in p.changes:
+        print(f"  {c}")
+    sections = [
+        ("stated knowledge that no longer conforms", p.invalid),
+        ("inferences to withdraw", p.stale_inferences),
+        ("pending candidates whose validation changes", p.candidates),
+    ]
+    for title, findings in sections:
+        if findings:
+            print(f"{title}:")
+            for f in findings:
+                shown = f.assertion_id
+                a = e.store.get_assertion(f.assertion_id)
+                if a is not None:
+                    shown = _fmt(e, a)
+                print(f"  {shown} — {f.reason}")
+    if p.retractions:
+        print(f"retractions incl. cascade: {', '.join(r.assertion_id for r in p.retractions)}")
+    if p.conflicts:
+        print(f"cardinality conflicts to resolve by review: {', '.join(p.conflicts)}")
+    if p.entity_conflicts:
+        print(f"entities with disjoint types: {', '.join(p.entity_conflicts)}")
+    for b in p.blocking(retract_invalid=False):
+        print(f"note: {b}")
+
+
+def _show_ontology(onto: Ontology) -> int:
     """Print the class hierarchy, predicates with their characteristics, and all rules."""
-    onto = Ontology.load(args.ontology)
 
     def tree(parent: str | None, depth: int) -> None:
         for name, t in sorted(onto.entity_types.items()):
@@ -340,9 +408,25 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--reviewer", required=True)
     s.set_defaults(func=cmd_alias)
 
-    sub.add_parser(
-        "ontology", help="show the class hierarchy, predicates and compiled rules"
-    ).set_defaults(func=cmd_ontology)
+    s = sub.add_parser(
+        "ontology",
+        help="show the ontology, or plan / apply / list / diff its versions",
+        description="show: hierarchy, predicates and compiled rules of the ontology file."
+        " plan: what applying the file would change. apply: make it the ontology in effect."
+        " log: list versions. diff A B: compare two recorded versions.",
+    )
+    s.add_argument(
+        "action", nargs="?", default="show", choices=["show", "plan", "apply", "log", "diff"]
+    )
+    s.add_argument("versions", nargs="*", type=int, help="diff: two version numbers")
+    s.add_argument("--actor", help="apply: the human approving the change (human:<name>)")
+    s.add_argument("--reason", help="apply: why the ontology changes")
+    s.add_argument(
+        "--retract-invalid",
+        action="store_true",
+        help="apply: retract stated knowledge that no longer conforms",
+    )
+    s.set_defaults(func=cmd_ontology)
 
     sub.add_parser("reason", help="run the reasoner to fixpoint").set_defaults(func=cmd_reason)
 
@@ -377,6 +461,7 @@ def main(argv: list[str] | None = None) -> int:
     except (
         ReviewError,
         UnauthorizedCommit,
+        OntologyMismatch,
         KeyError,
         ExtractionFailed,
         LLMReplayMissing,
