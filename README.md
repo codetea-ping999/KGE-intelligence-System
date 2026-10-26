@@ -92,6 +92,29 @@ IRI の基点は `--base` で変えられます。
 
 デモの最後では、`fixtures/ontology/base_v2.yaml`（`works_in_region` を廃止し、組織の所在地域 `located_in_region` を追加）を適用します。そのため `make qa` はデモのデータベースを v2 で検査します。
 
+## 実データ（日本企業）での検証
+
+商用利用できる無料の公開データを取り込めます。オントロジーは `ontology/jp_companies.yaml` を使います（会社、都道府県、市区町村、法人番号、商号、本店所在地、本社、親会社、CEO、設立年）。
+
+| データ | ライセンス | 取り込み方 |
+|---|---|---|
+| 国税庁 法人番号公表サイトの CSV（Unicode 版） | 公表サイトの利用規約（出典を表示すれば商用可） | `kge import houjin <file.csv>` |
+| Wikidata（法人番号 P3225 で照会） | CC0 | `kge fetch wikidata --from-db --out wd.json` のあと `kge import wikidata wd.json` |
+
+```bash
+export KGE_DB=build/jp.db KGE_ONTOLOGY=ontology/jp_companies.yaml
+uv run kge import houjin 23_aichi_all.csv --uri houjin:23      # 都道府県単位の CSV など
+uv run kge fetch wikidata --from-db --out build/wd.json        # query.wikidata.org への接続が必要
+uv run kge import wikidata build/wd.json --uri wikidata:companies
+uv run kge candidates --state pending                          # 出典どうしの矛盾はレビューに回る
+```
+
+- どちらの取り込み器も、元データを行単位の正規形（`kge.datasets`）に変換してから、ふつうの資料と同じ経路で取り込みます。各候補は自分の行を引用として持つので、出典との照合、差分更新、監査はそのまま働きます。`--canonical-out` で正規形を確認できます。
+- 出典をまたいだ同一企業は、名前ではなく法人番号で結びつけます（Wikidata の「トヨタ」と登記の「トヨタ自動車株式会社」は同じ実体になります）。両方の出典が同じ法人番号を述べていれば、根拠が1つの記述に追加されます。
+- 法人番号 CSV の1行は、変更年月日時点の商号と本店所在地です。同じ法人の行が複数あれば、連続する有効期間になります。検索対象除外（hihyoji=1）の行は取り込みません。新しい CSV を同じ `--uri` で取り込むと、差分だけが反映されます。
+- Wikidata の記述は信頼度 0.9、法人番号は 0.98 で、どちらも決定的な取り込みとして扱います。開始日がない Wikidata の商号のように期間が食い違う場合は、上書きせずに矛盾としてレビューに回します。
+- `tests/data/` の CSV と JSON は形式確認用の**架空データ**です。法人番号 CSV の列の並びは公開されている仕様に合わせていますが、実ファイルではまだ確認していません。
+
 ## 実 LLM（Claude API）での抽出
 
 ```bash
@@ -123,6 +146,7 @@ uv run kge ingest fixtures/docs/news_2026.txt --extractor llm --llm claude --rec
 | フェーズ6 | RDF/PROV-O 出力、Claude API 接続と録画 | `tests/test_phase6_export.py`, `tests/test_phase6_claude_adapter.py` |
 | フェーズ7a | クラス階層、プロパティ特性、カーディナリティ、OWL 出力 | `tests/test_ontology_semantics.py` |
 | フェーズ7b | オントロジーの版管理、影響分析、承認つきの移行 | `tests/test_ontology_versioning.py` |
+| フェーズ8 | 実データ取り込み（法人番号 CSV、Wikidata） | `tests/test_jp_companies.py` |
 
 ## 構成
 
@@ -136,6 +160,8 @@ src/kge/pipeline.py       取り込み・差分更新・レビュー・取り消
 src/kge/reason.py         前向き推論
 src/kge/versioning.py     差分・影響分析
 src/kge/ontology_change.py オントロジーの差分・影響分析・移行
+src/kge/datasets.py       構造化データの正規形と取り込み器
+src/kge/sources/          法人番号 CSV・Wikidata の変換
 src/kge/audit.py          ハッシュ連鎖監査ログ
 src/kge/qa.py             品質指標・不変条件チェック・golden 回帰
 src/kge/export.py         RDF (Turtle) / PROV-O 出力
@@ -153,3 +179,4 @@ fixtures/                 デモ文書（架空データ）、録画済み LLM �
 - ルール抽出器は台帳形式の定型文だけに対応しています。
 - オントロジーの意味は、ルールに変換して前向き推論で扱える範囲（階層、排他、逆・対称・推移・部分プロパティ、値の数の上限）に限ります。OWL 全体の推論（存在量化や等価クラスなど）は行いません。
 - 実体の型は実体そのものに記録しており、型の付与は版管理の対象ではありません。
+- 実データの実体の結びつけは法人番号だけです。市区町村は「都道府県名＋市区町村名」、人は名前で識別するため、同名の別人は区別できません。

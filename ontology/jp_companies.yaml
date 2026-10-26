@@ -1,0 +1,47 @@
+# 日本企業の基本情報（実データ検証用）
+# 出典: 国税庁法人番号公表サイト（登記上の名称・本店所在地）、Wikidata（本社・親会社・代表者・設立年）
+entity_types:
+  Organization: {disjoint_with: [Person, Place], description: "組織"}
+  Company: {subclass_of: Organization, description: "会社（株式・有限・合名・合資・合同）"}
+  Person: {disjoint_with: [Place], description: "人"}
+  Place: {description: "場所"}
+  Prefecture: {subclass_of: Place, description: "都道府県"}
+  Municipality: {subclass_of: Place, disjoint_with: [Prefecture], description: "市区町村（都道府県名つきの名前で識別）"}
+
+predicates:
+  corporate_number:
+    {domain: Organization, range: "xsd:string", functional: true,
+     description: "法人番号（13桁）。出典をまたいで同じ組織を結びつける鍵"}
+  legal_name:
+    {domain: Organization, range: "xsd:string", functional: true, temporal: true,
+     description: "商号又は名称"}
+  registered_office_in:
+    {domain: Organization, range: Municipality, functional: true, temporal: true,
+     description: "本店又は主たる事務所の所在地（登記、市区町村まで）"}
+  headquarters_in:
+    {domain: Organization, range: Municipality, functional: true, temporal: true,
+     description: "本社所在地（Wikidata P159。登記上の本店とは異なることがある）"}
+  located_in_prefecture:
+    {domain: Municipality, range: Prefecture, functional: true, description: "所属する都道府県"}
+  registered_prefecture:
+    {domain: Organization, range: Prefecture, temporal: true, description: "本店所在の都道府県（推論）"}
+  parent_organization:
+    {domain: Organization, range: Organization, functional: true, temporal: true,
+     subproperty_of: in_group_of, description: "親会社（Wikidata P749）"}
+  subsidiary:
+    {domain: Organization, range: Organization, temporal: true, inverse_of: parent_organization,
+     description: "子会社（parent_organization の逆）"}
+  in_group_of:
+    {domain: Organization, range: Organization, transitive: true, temporal: true,
+     description: "同じ企業グループの上位（親会社の推移閉包）"}
+  ceo:
+    {domain: Organization, range: Person, temporal: true, max_cardinality: 2,
+     description: "最高経営責任者（Wikidata P169。共同CEOを考え2人まで）"}
+  inception_year:
+    {domain: Organization, range: "xsd:gYear", functional: true, description: "設立年（Wikidata P571）"}
+
+rules:
+  - id: R_registered_prefecture
+    if: ["?o registered_office_in ?m", "?m located_in_prefecture ?p"]
+    then: "?o registered_prefecture ?p"
+    confidence_factor: 1.0
