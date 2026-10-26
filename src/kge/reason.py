@@ -61,7 +61,7 @@ class Reasoner:
             facts.setdefault(a.predicate, []).append(a)
         ops: list[AddAssertion] = []
         planned: set[tuple[str, str, str, str, str]] = set()
-        for rule in self.ontology.rules:
+        for rule in self.ontology.all_rules():
             ts, tp, to = parse_pattern(rule.then)
             pdef = self.ontology.predicates[tp]
             for binding, premises in self._matches(rule, facts):

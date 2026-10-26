@@ -222,6 +222,22 @@ def intervals_overlap(
     return lo_a <= hi_b and lo_b <= hi_a
 
 
+def max_concurrent(
+    spans: list[tuple[str, dt.date | None, dt.date | None]],
+    within: tuple[dt.date | None, dt.date | None] = (None, None),
+) -> int:
+    """Largest number of distinct values holding at one common day inside ``within``.
+    Values that never coexist (one in January, another in February) are not counted
+    together, unlike a plain "overlaps the window" test."""
+    lo, hi = within[0] or dt.date.min, within[1] or dt.date.max
+    points = {lo} | {f for _, f, _ in spans if f is not None and lo <= f <= hi}
+    best = 0
+    for day in points:
+        held = {v for v, f, t in spans if (f or dt.date.min) <= day <= (t or dt.date.max)}
+        best = max(best, len(held))
+    return best
+
+
 def interval_intersection(
     intervals: list[tuple[dt.date | None, dt.date | None]],
 ) -> tuple[dt.date | None, dt.date | None] | None:

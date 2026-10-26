@@ -186,8 +186,10 @@ class LLMExtractor:
         return f"llm:{self.client.model}@{self.template_hash}"
 
     def prompt(self, source: Source) -> str:
+        onto = self.ontology
         preds = ", ".join(
-            f"{k}({v.domain}→{v.range})" for k, v in sorted(self.ontology.predicates.items())
+            f"{k}({onto.predicates[k].domain}→{onto.predicates[k].range})"
+            for k in onto.extractable_predicates()
         )
         return PROMPT_TEMPLATE.format(predicates=preds, document=source.content)
 

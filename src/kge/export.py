@@ -20,6 +20,7 @@ DEFAULT_BASE = "https://example.org/kge/"
 _PREFIXES = """\
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
@@ -83,23 +84,59 @@ def to_turtle(store: Store, base: str = DEFAULT_BASE, include_history: bool = Tr
         + f"@prefix kgs: <{base}schema#> .\n"
     )
 
-    # schema: entity types and predicates from the ontology
-    for name, t in sorted(store.ontology.entity_types.items()):
-        pairs = [("a", "rdfs:Class")]
-        pairs += [("kgs:disjointWith", f"kgo:{other}") for other in t.disjoint_with]
+    # schema: the ontology as OWL 2 (classes, hierarchy, property characteristics)
+    onto = store.ontology
+    w.node(
+        f"<{base}ontology>",
+        [("a", "owl:Ontology"), ("rdfs:label", _lit("KGE ontology"))],
+    )
+    for name, t in sorted(onto.entity_types.items()):
+        pairs = [("a", "owl:Class"), ("rdfs:label", _lit(name))]
+        if t.subclass_of:
+            pairs.append(("rdfs:subClassOf", f"kgo:{t.subclass_of}"))
+        pairs += [("owl:disjointWith", f"kgo:{other}") for other in t.disjoint_with]
+        if t.description:
+            pairs.append(("rdfs:comment", _lit(t.description, "ja")))
         w.node(f"kgo:{name}", pairs)
-    for name, p in sorted(store.ontology.predicates.items()):
+    for name, p in sorted(onto.predicates.items()):
+        kinds = ["owl:DatatypeProperty" if p.literal_range else "owl:ObjectProperty"]
+        # the plain triples of a temporal predicate flatten time away, so OWL characteristics
+        # that combine triples (one value only, chaining) would hold across periods; they are
+        # stated per point in time with kgs: terms instead
+        timeless: list[tuple[str, str]] = []
+        if p.functional:
+            if p.temporal:
+                timeless.append(("kgs:functionalAtEachTime", _typed("true", "xsd:boolean")))
+            else:
+                kinds.append("owl:FunctionalProperty")
+        if p.symmetric:
+            kinds.append("owl:SymmetricProperty")
+        if p.transitive:
+            if p.temporal:
+                timeless.append(("kgs:transitiveAtEachTime", _typed("true", "xsd:boolean")))
+            else:
+                kinds.append("owl:TransitiveProperty")
         rng = p.range if p.literal_range else f"kgo:{p.range}"
         pairs = [
-            ("a", "rdf:Property"),
+            ("a", ", ".join(kinds)),
+            ("rdfs:label", _lit(name)),
             ("rdfs:domain", f"kgo:{p.domain}"),
             ("rdfs:range", rng),
-            ("kgs:functional", _typed(str(p.functional).lower(), "xsd:boolean")),
         ]
+        if p.subproperty_of:
+            pairs.append(("rdfs:subPropertyOf", f"kgo:{p.subproperty_of}"))
+        if p.inverse_of:
+            pairs.append(("owl:inverseOf", f"kgo:{p.inverse_of}"))
+        if p.max_cardinality is not None and not p.functional:
+            pairs.append(
+                ("kgs:maxCardinality", _typed(str(p.max_cardinality), "xsd:nonNegativeInteger"))
+            )
+        pairs.append(("kgs:temporal", _typed(str(p.temporal).lower(), "xsd:boolean")))
+        pairs += timeless
         if p.description:
             pairs.append(("rdfs:comment", _lit(p.description, "ja")))
         w.node(f"kgo:{name}", pairs)
-    for rule in store.ontology.rules:
+    for rule in onto.all_rules():
         w.node(
             f"kge:rule_{_local(rule.id)}",
             [
@@ -107,6 +144,7 @@ def to_turtle(store: Store, base: str = DEFAULT_BASE, include_history: bool = Tr
                 ("rdfs:label", _lit(rule.id)),
                 ("kgs:if", _lit(" . ".join(rule.if_))),
                 ("kgs:then", _lit(rule.then)),
+                *([("kgs:axiom", _lit(rule.axiom))] if rule.axiom else []),
             ],
         )
 

@@ -14,9 +14,9 @@ from kge.models import (
     CandidateState,
     EpistemicType,
     Status,
-    intervals_overlap,
     is_human_actor,
     is_llm_actor,
+    max_concurrent,
 )
 from kge.store import Store
 
@@ -126,27 +126,29 @@ def checks(store: Store) -> list[Check]:
     by_sp: dict[tuple[str, str], list[Assertion]] = {}
     for a in active:
         pdef = store.ontology.predicates.get(a.predicate)
-        if pdef and pdef.functional:
+        if pdef and pdef.cardinality_limit is not None:
             by_sp.setdefault((a.subject, a.predicate), []).append(a)
-    for group in by_sp.values():
-        for i, x in enumerate(group):
-            for y in group[i + 1 :]:
-                if x.object_value != y.object_value and intervals_overlap(
-                    x.valid_from, x.valid_to, y.valid_from, y.valid_to
-                ):
-                    conflicts.append(f"{x.id}/{y.id}")
+    for (_, pred), group in by_sp.items():
+        limit = store.ontology.predicates[pred].cardinality_limit
+        assert limit is not None
+        spans = [(y.object_value, y.valid_from, y.valid_to) for y in group]
+        for x in group:
+            # distinct values holding together on some day while x holds
+            if max_concurrent(spans, (x.valid_from, x.valid_to)) > limit:
+                conflicts.append(x.id)
     out.append(Check("no_active_conflicts", not conflicts, ", ".join(conflicts)))
 
     schema = []
     for a in active:
         pdef = store.ontology.predicates.get(a.predicate)
         subj = store.get_entity(a.subject)
-        if pdef is None or subj is None or pdef.domain not in subj.types:
+        onto = store.ontology
+        if pdef is None or subj is None or not onto.conforms(subj.types, pdef.domain):
             schema.append(a.id)
             continue
         if not pdef.literal_range:
             obj = store.get_entity(a.object_value)
-            if obj is None or pdef.range not in obj.types:
+            if obj is None or not onto.conforms(obj.types, pdef.range):
                 schema.append(a.id)
     out.append(Check("schema_conformance", not schema, ", ".join(schema)))
     return out

@@ -130,6 +130,19 @@
     "rule": "R1_work_country"
   },
   {
+    "subject": "Acme社",
+    "predicate": "employs",
+    "object": "佐藤ボブ",
+    "type": "inference",
+    "confidence": 0.7,
+    "valid_from": "2023-01-01",
+    "valid_to": null,
+    "extracted_by": "reasoner:AX_inverse_works_for_employs",
+    "approved_by": "policy:reasoner",
+    "evidence": 0,
+    "rule": "AX_inverse_works_for_employs"
+  },
+  {
     "subject": "佐藤ボブ",
     "predicate": "works_in_region",
     "object": "ヨーロッパ",
@@ -180,5 +193,31 @@
     "approved_by": "policy:reasoner",
     "evidence": 0,
     "rule": "R1_work_country"
+  },
+  {
+    "subject": "Beta社",
+    "predicate": "employs",
+    "object": "佐藤ボブ",
+    "type": "inference",
+    "confidence": 0.95,
+    "valid_from": "2020-01-01",
+    "valid_to": "2022-12-31",
+    "extracted_by": "reasoner:AX_inverse_works_for_employs",
+    "approved_by": "policy:reasoner",
+    "evidence": 0,
+    "rule": "AX_inverse_works_for_employs"
+  },
+  {
+    "subject": "Acme社",
+    "predicate": "employs",
+    "object": "田中アリス",
+    "type": "inference",
+    "confidence": 0.95,
+    "valid_from": "2019-04-01",
+    "valid_to": null,
+    "extracted_by": "reasoner:AX_inverse_works_for_employs",
+    "approved_by": "policy:reasoner",
+    "evidence": 0,
+    "rule": "AX_inverse_works_for_employs"
   }
 ]

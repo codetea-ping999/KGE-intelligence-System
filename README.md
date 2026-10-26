@@ -50,6 +50,7 @@ uv run kge impact A00003               # 影響分析
 uv run kge retract A00003 --actor human:you --reason "..."   # 依存する推論ごと取り消し
 uv run kge audit verify                # 監査ログの改ざん検査
 uv run kge qa                          # 品質ゲート
+uv run kge ontology                    # クラス階層・述語の特性・推論ルールの一覧
 ```
 
 `KGE_CLOCK=fixed` を指定すると時計が固定され、実行結果が完全に再現されます。
@@ -63,7 +64,18 @@ uv run kge export --format turtle --active-only                # 確定中の知
 
 各アサーションは `rdf:Statement` かつ `prov:Entity` として出力され、種別（`kgs:Fact` / `kgs:Inference` / `kgs:Hypothesis`）、信頼度、有効期間、出典（`prov:wasDerivedFrom` → 文書の版）、推論の前提とルール、抽出者（`prov:wasAttributedTo`）と承認者（`kgs:approvedBy`）、取り消し時刻（`prov:invalidatedAtTime`）を持ちます。
 確定済みの事実と推論だけは素のトリプル（例: `kge:E0002 kgo:located_in kge:E0007`）としても出力するので、通常の SPARQL では確定知識だけが見えます。
+オントロジーは OWL 2（`owl:Class`、`rdfs:subClassOf`、`owl:disjointWith`、`owl:inverseOf`、`owl:FunctionalProperty` など）として先頭に出力します。
 IRI の基点は `--base` で変えられます。
+
+## オントロジー
+
+`ontology/base.yaml` には型、述語、推論ルールを書きます。型と述語には次の記述ができます。
+
+- `subclass_of`: クラス階層。例えば `Company` は `Organization` の下位クラスなので、`works_for` の目的語になれます。`disjoint_with`（排他）は下位クラスにも継承されます。
+- `inverse_of` / `symmetric` / `transitive` / `subproperty_of`: プロパティの特性です。読み込み時に `AX_` で始まる推論ルールへ変換され、導かれた知識は前提へのリンクを持つ推論として記録されます。前提を取り消すと、そこから導かれた知識も取り消されます。例えば `employs` は `works_for` の逆なので、台帳の勤務記録から「Acme社 employs 田中アリス」が導かれます。
+- `functional` / `max_cardinality`: 同じ主語が同じ時期に取れる値の数の上限です。上限を超える候補は矛盾として人手のレビューに回ります。
+
+定義に矛盾があるオントロジー（階層の循環、排他なクラス同士の下位になるクラス、逆プロパティの型が鏡像になっていないもの、など）は読み込み時に拒否されます。`uv run kge ontology` で、階層と変換後のルールを確認できます。
 
 ## 実 LLM（Claude API）での抽出
 
@@ -94,11 +106,12 @@ uv run kge ingest fixtures/docs/news_2026.txt --extractor llm --llm claude --rec
 | AC9 | 監査ログと改ざん検知 | `tests/test_ac9_audit.py` |
 | AC10, AC11 | 再現性、品質ゲート、CLI 一連操作 | `tests/test_ac10_ac11_reproducibility_qa.py` |
 | フェーズ6 | RDF/PROV-O 出力、Claude API 接続と録画 | `tests/test_phase6_export.py`, `tests/test_phase6_claude_adapter.py` |
+| フェーズ7a | クラス階層、プロパティ特性、カーディナリティ、OWL 出力 | `tests/test_ontology_semantics.py` |
 
 ## 構成
 
 ```
-ontology/base.yaml        エンティティ型・述語（domain/range/関数性/時間性）・推論ルール
+ontology/base.yaml        クラス階層・述語（domain/range/関数性/時間性/逆・対称・推移）・推論ルール
 src/kge/models.py         データモデルと不変条件
 src/kge/store.py          SQLite ストア（追記型・版管理・コミット時の権限検査）
 src/kge/validate.py       検証ゲート（スキーマ・重複・矛盾・出典）
@@ -121,3 +134,5 @@ fixtures/                 デモ文書（架空データ）、録画済み LLM �
 - 実体の統合は別名の登録（`kge alias`）までで、実体IDの付け替えは行いません。
 - 同じ結論に複数の根拠がある場合、最初に見つかった根拠だけを記録します。その根拠が取り消されると、次の推論実行で別の根拠から再導出されます。
 - ルール抽出器は台帳形式の定型文だけに対応しています。
+- オントロジーの意味は、ルールに変換して前向き推論で扱える範囲（階層、排他、逆・対称・推移・部分プロパティ、値の数の上限）に限ります。OWL 全体の推論（存在量化や等価クラスなど）は行いません。
+- 実体の型は実体そのものに記録しており、型の付与は版管理の対象ではありません。
