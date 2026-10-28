@@ -363,3 +363,84 @@ def test_ontology_cli(capsys) -> None:  # type: ignore[no-untyped-def]
     out = capsys.readouterr().out
     assert "    Company" in out  # indented under Organization
     assert "AX_inverse_works_for_employs (axiom:inverse_of)" in out
+
+
+def test_conflicting_subtypes_in_one_batch_reject_only_the_offender(engine) -> None:  # type: ignore[no-untyped-def]
+    r = ingest_specs(
+        engine,
+        "x",
+        "台帳",
+        lambda s: [
+            cand(s, "鈴木", "works_for", "Delta社", o_type="Company"),
+            cand(s, "佐藤", "works_for", "Delta社", o_type="University"),
+        ],
+    )
+    assert len(r.accepted) == 1 and len(r.rejected) == 1  # no rollback of the whole batch
+    [bad] = [engine.store.get_candidate(c) for c in r.rejected]
+    assert "TYPE_DISJOINT" in bad.report.codes()  # type: ignore[union-attr]
+
+
+def test_sub_property_before_its_functional_parent_in_one_batch(tmp_path: Path) -> None:
+    e = _engine(
+        tmp_path,
+        AXIOMS.replace(
+            "works_for: {domain: Person, range: Organization, temporal: true}",
+            "works_for: {domain: Person, range: Organization, temporal: true, functional: true}",
+        ),
+    )
+    r = ingest_specs(
+        e,
+        "a",
+        "a",
+        lambda s: [
+            cand(s, "鈴木", "leads", "Acme社", valid_from="2024-01-01"),
+            cand(s, "鈴木", "works_for", "Beta社", valid_from="2024-01-01"),
+        ],
+    )
+    assert len(r.accepted) == 1 and len(r.pending) == 1
+    assert all(c.ok for c in checks(e.store))  # no second works_for is derived
+
+
+def test_ambiguous_axiom_rule_ids_are_refused() -> None:
+    with pytest.raises(ValueError, match="ambiguous"):
+        _load(
+            """
+            entity_types:
+              T: {}
+            predicates:
+              a: {domain: T, range: T}
+              a_b: {domain: T, range: T}
+              c: {domain: T, range: T, inverse_of: a_b}
+              b_c: {domain: T, range: T, inverse_of: a}
+            """
+        )
+
+
+def test_qa_cardinality_counts_only_values_holding_together() -> None:
+    import datetime as dt
+
+    from kge.models import Assertion
+    from kge.qa import cardinality_violations
+
+    onto = _load(
+        """
+        entity_types:
+          T: {}
+        predicates:
+          p: {domain: T, range: "xsd:string", temporal: true, max_cardinality: 1}
+        """
+    )
+
+    def a(i: int, v: str, f: dt.date, t: dt.date | None) -> Assertion:
+        return Assertion.model_construct(
+            id=f"A{i}", subject="E1", predicate="p", object_value=v, valid_from=f, valid_to=t
+        )
+
+    d = dt.date
+    group = [
+        a(1, "a", d(2020, 1, 1), d(2020, 6, 1)),
+        a(2, "b", d(2020, 5, 1), d(2020, 12, 1)),
+        a(3, "c", d(2021, 1, 1), None),  # never together with a or b
+        *(a(10 + i, "c", d(2021, 1, 2) + dt.timedelta(days=i), None) for i in range(300)),
+    ]
+    assert sorted(cardinality_violations(onto, group)) == ["A1", "A2"]

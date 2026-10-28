@@ -16,7 +16,6 @@ from kge.models import (
     Status,
     is_human_actor,
     is_llm_actor,
-    max_concurrent,
 )
 from kge.ontology import Ontology, literal_ok
 from kge.store import Store
@@ -120,10 +119,22 @@ def cardinality_violations(onto: Ontology, active: list[Assertion]) -> list[str]
     for (_, pred), group in by_sp.items():
         limit = onto.predicates[pred].cardinality_limit
         assert limit is not None
-        spans = [(y.object_value, y.valid_from, y.valid_to) for y in group]
+        # how many distinct values hold on each day a value starts (the count can only rise
+        # there), computed once per group rather than once per assertion
+        days = {dt.date.min} | {y.valid_from for y in group if y.valid_from is not None}
+        held = {
+            d: len(
+                {
+                    y.object_value
+                    for y in group
+                    if (y.valid_from or dt.date.min) <= d <= (y.valid_to or dt.date.max)
+                }
+            )
+            for d in days
+        }
         for x in group:
-            # distinct values holding together on some day while x holds
-            if max_concurrent(spans, (x.valid_from, x.valid_to)) > limit:
+            lo, hi = x.valid_from or dt.date.min, x.valid_to or dt.date.max
+            if any(n > limit for d, n in held.items() if lo <= d <= hi):
                 out.append(x.id)
     return out
 
