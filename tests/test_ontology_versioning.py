@@ -322,3 +322,39 @@ def test_apply_plans_under_the_write_lock(engine, monkeypatch) -> None:  # type:
     monkeypatch.setattr(ontology_change, "plan", spy)
     ontology_change.apply(engine, Ontology.load(V2), "human:o", "移行")
     assert seen == [True]
+
+
+def test_plan_reports_conflicts_among_values_new_rules_derive(engine) -> None:  # type: ignore[no-untyped-def]
+    bootstrap(engine)
+    ingest_specs(engine, "x", "台帳", lambda s: [cand(s, "Acme社", "employs", "鈴木")])
+    head = engine.store.head()
+
+    def add_head(d):  # type: ignore[no-untyped-def]
+        d["predicates"]["head"] = {"domain": "Organization", "range": "Person", "functional": True}
+        d["rules"].append({"id": "R_head", "if": ["?o employs ?p"], "then": "?o head ?p"})
+
+    p = ontology_change.plan(engine, _variant(add_head))
+    derived = [c for c in p.conflicts if c.startswith("derived: Acme社 head")]
+    assert len(derived) >= 2  # two people would become the one head
+    assert engine.store.head() == head and engine.store.active(predicate="head") == []
+    assert engine.ontology.predicates.get("head") is None  # the preview left nothing behind
+
+
+def test_engine_with_a_superseded_ontology_cannot_write(tmp_path: Path) -> None:
+    db = tmp_path / "kge.db"
+    a = Engine.open(db, BASE, FixedClock(DEFAULT_FIXED_START))
+    b = Engine.open(db, BASE, FixedClock(DEFAULT_FIXED_START))
+    bootstrap(a)
+
+    def drop(d):  # type: ignore[no-untyped-def]
+        del d["predicates"]["founded_in"]
+
+    ontology_change.apply(a, _variant(drop), "human:o", "設立年は扱わない", retract_invalid=True)
+    with pytest.raises(OntologyMismatch, match="another connection"):
+        ingest_specs(
+            b,
+            "y",
+            "Beta社は2001年に設立された。",
+            lambda s: [cand(s, "Beta社", "founded_in", "2001", datatype="xsd:gYear")],
+        )
+    assert a.store.active(predicate="founded_in") == []

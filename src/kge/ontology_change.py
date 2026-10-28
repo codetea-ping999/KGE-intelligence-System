@@ -14,7 +14,8 @@ from typing import Any
 from kge.models import CandidateState, EpistemicType, is_human_actor
 from kge.ontology import Ontology, RuleDef
 from kge.pipeline import Engine, ReviewError
-from kge.qa import cardinality_violations, schema_problem
+from kge.qa import cardinality_violations, schema_problem, show_term
+from kge.reason import Reasoner
 from kge.store import CommitResult, Retract
 from kge.validate import Validator
 from kge.versioning import retract_ops
@@ -146,8 +147,7 @@ def plan(engine: Engine, new: Ontology) -> OntologyPlan:
             r.reason = f"ontology v{result.from_version + 1}: {found.reason}"
 
     gone = {r.assertion_id for r in result.retractions}
-    remaining = [a for a in active if a.id not in gone]
-    result.conflicts = cardinality_violations(new, remaining)
+    result.conflicts = _prospective_conflicts(engine, new, result.retractions)
     for e in store.entities():
         pairs = [(x, y) for i, x in enumerate(e.types) for y in e.types[i + 1 :]]
         if any(new.disjoint(x, y) for x, y in pairs):
@@ -162,6 +162,36 @@ def plan(engine: Engine, new: Ontology) -> OntologyPlan:
                 Finding(sc.id, f"{', '.join(before) or '-'} → {', '.join(after) or '-'}")
             )
     return result
+
+
+def _prospective_conflicts(engine: Engine, new: Ontology, retractions: list[Retract]) -> list[str]:
+    """Cardinality violations once the migration has run, including values the new rules
+    would derive. Simulated inside a savepoint that is always rolled back."""
+    store = engine.store
+    saved = store.ontology, store.pending_ontology, store.loaded_version
+    before = {a.id for a in store.active(include_hypotheses=True)}
+    with store.transaction() as c:
+        c.execute("SAVEPOINT ontology_preview")
+        try:
+            if retractions:
+                store.commit("system", "ontology preview", retractions)
+            store.ontology = new
+            Reasoner(store, new).run()
+            out = []
+            for aid in cardinality_violations(new, store.active(include_hypotheses=True)):
+                if aid in before:
+                    out.append(aid)
+                else:  # exists only in the preview: describe it instead of naming its id
+                    a = store.get_assertion(aid)
+                    assert a is not None
+                    out.append(
+                        f"derived: {store.label(a.subject)} {a.predicate} {show_term(store, a)}"
+                    )
+            return out
+        finally:
+            c.execute("ROLLBACK TO ontology_preview")
+            c.execute("RELEASE ontology_preview")
+            store.ontology, store.pending_ontology, store.loaded_version = saved
 
 
 @dataclass
@@ -184,7 +214,7 @@ def apply(
     if not reason.strip():
         raise ReviewError("a reason is required")
     store = engine.store
-    previous, pending = store.ontology, store.pending_ontology
+    previous, pending, loaded = store.ontology, store.pending_ontology, store.loaded_version
     try:
         # plan under the write lock, so no other writer can change what it describes
         with store.transaction():
@@ -198,6 +228,7 @@ def apply(
     except BaseException:
         # the transaction rolled back; put the in-memory state back as well
         store.ontology, store.pending_ontology = previous, pending
+        store.loaded_version = loaded
         engine.refresh()
         raise
 

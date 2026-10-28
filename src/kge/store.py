@@ -246,6 +246,8 @@ class Store:
         self.ontology = ontology
         self.pending_ontology: Ontology | None = None
         versions = self.ontology_versions()
+        #: version of ``self.ontology``; writes are refused once the database has moved on
+        self.loaded_version = versions[-1].version if versions else 0
         if not versions:
             self.record_ontology(ontology, "system", "initial ontology")
         elif versions[-1].content_hash != ontology.content_hash():
@@ -327,6 +329,7 @@ class Store:
             )
         self.ontology = ontology
         self.pending_ontology = None
+        self.loaded_version = version
         return version
 
     def close(self) -> None:
@@ -340,6 +343,14 @@ class Store:
         self.conn.execute("BEGIN IMMEDIATE")
         self._in_tx = True
         try:
+            # checked under the write lock: another connection may have migrated the ontology
+            # since this one was opened, and its cached definitions would then be wrong
+            latest = self.conn.execute("SELECT MAX(version) FROM ontology_versions").fetchone()
+            if int(latest[0] or 0) != self.loaded_version:
+                raise OntologyMismatch(
+                    f"the ontology was changed to v{latest[0]} by another connection;"
+                    " reopen the database to continue"
+                )
             yield self.conn
         except BaseException:
             self.conn.execute("ROLLBACK")

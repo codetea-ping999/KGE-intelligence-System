@@ -207,7 +207,8 @@ class Ontology(BaseModel):
             if p.inverse_of is not None:
                 out.append(
                     RuleDef(
-                        id=f"AX_inverse_{name}",  # the target is unique; "a_b"+"c" vs "a"+"b_c" is not
+                        # named by the target alone: "a_b"+"c" and "a"+"b_c" would collide
+                        id=f"AX_inverse_{name}",
                         if_=[f"?x {p.inverse_of} ?y"],
                         then=f"?y {name} ?x",
                         axiom="inverse_of",
