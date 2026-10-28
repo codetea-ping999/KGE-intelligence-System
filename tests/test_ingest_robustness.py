@@ -232,3 +232,24 @@ def test_restatement_with_a_new_epistemic_type_is_restaged(engine) -> None:  # t
     r = ingest_specs(engine, "memo", "Acme社は日本にある。\n確認済み\n", build(EpistemicType.FACT))
     assert r.unchanged == 0 and len(r.obsolete) == 1
     assert [a.epistemic_type for a in _located(engine)] == [EpistemicType.FACT]
+
+
+def test_one_term_cannot_be_two_disjoint_types(engine) -> None:  # type: ignore[no-untyped-def]
+    r = engine.ingest("doc", "XはXに勤務している。\nAcme社は日本に所在する。\n", rule(engine))
+    assert len(r.accepted) == 1 and len(r.rejected) == 1  # the valid line is kept
+    [bad] = [engine.store.get_candidate(c) for c in r.rejected]
+    assert bad is not None and "TYPE_DISJOINT" in bad.report.codes()  # type: ignore[union-attr]
+
+
+def test_valid_restatement_after_a_rejected_one_is_kept(engine) -> None:  # type: ignore[no-untyped-def]
+    r = ingest_specs(
+        engine,
+        "x",
+        "Acme社は日本に所在する。",
+        lambda s: [
+            cand(s, "Acme社", "located_in", "日本", quote="本文にない引用"),  # rejected
+            cand(s, "Acme社", "located_in", "日本"),
+        ],
+    )
+    assert len(r.rejected) == 1 and len(r.accepted) == 1 and r.unchanged == 0
+    assert len(_located(engine)) == 1

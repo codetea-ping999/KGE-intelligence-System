@@ -95,7 +95,8 @@ class Validator:
         elif not isinstance(cand.object, EntityRef):
             add("SCHEMA_RANGE", Severity.ERROR, f"{cand.predicate} expects a {pdef.range} entity")
         else:
-            obj_key = self._check_entity(cand.object, pdef.range, "object", add, batch)
+            # the subject may name the same new entity, with a type of its own
+            obj_key = self._check_entity(cand.object, pdef.range, "object", add, [*batch, cand])
 
         # -- provenance
         verified_independent = False
@@ -208,13 +209,13 @@ class Validator:
                     )
         if limit is not None and not pdef.functional and duplicate_of is None:
             # functional predicates are covered by the CONFLICT_FUNCTIONAL checks
-            value = cand.key()[2]
+            value = self._term(cand.object)
             spans += [
-                (other.key()[2], other.valid_from, other.valid_to, None)
+                (self._term(other.object), other.valid_from, other.valid_to, None)
                 for other in batch
-                if other.subject.label == cand.subject.label
-                and other.predicate == cand.predicate
-                and other.key()[2] != value
+                if self._same_subject(other, cand)
+                and other.predicate in self._family(cand.predicate)
+                and self._term(other.object) != value
                 and intervals_overlap(
                     other.valid_from, other.valid_to, cand.valid_from, cand.valid_to
                 )
@@ -239,9 +240,9 @@ class Validator:
         if pdef.functional:
             for other in batch:
                 if (
-                    other.subject.label == cand.subject.label
-                    and other.predicate == cand.predicate
-                    and other.key()[2] != cand.key()[2]
+                    self._same_subject(other, cand)
+                    and other.predicate in self._family(cand.predicate)
+                    and self._term(other.object) != self._term(cand.object)
                     and intervals_overlap(
                         other.valid_from, other.valid_to, cand.valid_from, cand.valid_to
                     )
@@ -274,14 +275,12 @@ class Validator:
         """A sub-property value is also a value of each super-property (the reasoner derives
         it), so it must fit their limits too: two simultaneous ``leads`` would otherwise give
         two ``works_for`` when ``works_for`` is functional."""
-        value, window = cand.key()[2], (cand.valid_from, cand.valid_to)
+        value, window = self._term(cand.object), (cand.valid_from, cand.valid_to)
         for sp in self.ontology.super_properties(cand.predicate):
             limit = self.ontology.predicates[sp].cardinality_limit
             if limit is None:
                 continue
-            family = {sp} | {
-                n for n in self.ontology.predicates if sp in self.ontology.super_properties(n)
-            }
+            family = self._family(sp)
             spans: list[tuple[str, dt.date | None, dt.date | None]] = [(value, *window)]
             related: list[str] = []
             if subj_id is not None:
@@ -293,9 +292,9 @@ class Validator:
                         if self._value(a) != value:
                             related.append(a.id)
             spans += [
-                (o.key()[2], o.valid_from, o.valid_to)
+                (self._term(o.object), o.valid_from, o.valid_to)
                 for o in batch
-                if o.subject.label == cand.subject.label
+                if self._same_subject(o, cand)
                 and o.predicate in family
                 and intervals_overlap(o.valid_from, o.valid_to, *window)
             ]
@@ -311,8 +310,25 @@ class Validator:
                 )
 
     def _value(self, a: Assertion) -> str:
-        """The object as a candidate would name it (entity label or literal value)."""
-        return self.store.label(a.object_value) if a.object_kind == "entity" else a.object_value
+        """The object's identity: entity id or literal value (see ``_term``)."""
+        return a.object_value
+
+    def _term(self, term: EntityRef | LiteralValue) -> str:
+        """Identity of a candidate's term, comparable with ``_value``: the id of the entity its
+        label resolves to, else the label of an entity still to be made."""
+        if isinstance(term, LiteralValue):
+            return term.value
+        e = self.store.find_entity_by_label(term.label)
+        return e.id if e is not None else f"new:{term.label}"
+
+    def _same_subject(self, a: Candidate, b: Candidate) -> bool:
+        return self._term(a.subject) == self._term(b.subject)
+
+    def _family(self, predicate: str) -> set[str]:
+        """The predicate and every predicate whose values are also its values."""
+        return {predicate} | {
+            n for n in self.ontology.predicates if predicate in self.ontology.super_properties(n)
+        }
 
     def _show(self, a: Assertion) -> str:
         obj = self.store.label(a.object_value) if a.object_kind == "entity" else a.object_value
@@ -340,13 +356,14 @@ class Validator:
         batch: Sequence[Candidate] = (),
     ) -> str | None:
         """Returns the id of the existing entity the reference resolves to, if any."""
+        wanted = ref.type if ref.type in self.ontology.entity_types else implied
         for t in sorted(self._batch_types(ref.label, batch)):
-            if t != implied and self.ontology.disjoint(t, implied):
+            if t != wanted and self.ontology.disjoint(t, wanted):
                 add(
                     "TYPE_DISJOINT",
                     Severity.ERROR,
-                    f"{ref.label!r} is {t} earlier in this ingestion, which is disjoint with"
-                    f" {implied}",
+                    f"{ref.label!r} is {t} elsewhere in this ingestion, which is disjoint with"
+                    f" {wanted}",
                 )
         if ref.type is not None:
             if ref.type not in self.ontology.entity_types:
@@ -367,7 +384,6 @@ class Validator:
                     [e.id for e in similar],
                 )
             return None
-        wanted = ref.type if ref.type in self.ontology.entity_types else implied
         for t in existing.types:
             if t != wanted and self.ontology.disjoint(t, wanted):
                 add(

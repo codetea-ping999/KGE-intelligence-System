@@ -228,12 +228,13 @@ class Engine:
             if cand.key() in kept or cand.key() in seen:
                 result.unchanged += 1  # already known, or stated twice in this version
                 continue
-            seen.add(cand.key())
             cid = self.store.stage(cand, f"{src.id}v{src.version}", src, extraction.raw_output)
             result.staged.append(cid)
             report = self.validator.validate(cand, batch, excluded)
             self.store.set_report(cid, report)
             decision, why = auto_policy(cand.extracted_by, report)
+            if decision != "reject":
+                seen.add(cand.key())  # a rejected one must not hide a valid restatement
             if decision == "accept":
                 batch.append(cand)  # later candidates are checked against what gets committed
             if decision == "reject":

@@ -363,3 +363,39 @@ def test_ontology_cli(capsys) -> None:  # type: ignore[no-untyped-def]
     out = capsys.readouterr().out
     assert "    Company" in out  # indented under Organization
     assert "AX_inverse_works_for_employs (axiom:inverse_of)" in out
+
+
+def test_conflicting_subtypes_in_one_batch_reject_only_the_offender(engine) -> None:  # type: ignore[no-untyped-def]
+    r = ingest_specs(
+        engine,
+        "x",
+        "台帳",
+        lambda s: [
+            cand(s, "鈴木", "works_for", "Delta社", o_type="Company"),
+            cand(s, "佐藤", "works_for", "Delta社", o_type="University"),
+        ],
+    )
+    assert len(r.accepted) == 1 and len(r.rejected) == 1  # no rollback of the whole batch
+    [bad] = [engine.store.get_candidate(c) for c in r.rejected]
+    assert "TYPE_DISJOINT" in bad.report.codes()  # type: ignore[union-attr]
+
+
+def test_sub_property_before_its_functional_parent_in_one_batch(tmp_path: Path) -> None:
+    e = _engine(
+        tmp_path,
+        AXIOMS.replace(
+            "works_for: {domain: Person, range: Organization, temporal: true}",
+            "works_for: {domain: Person, range: Organization, temporal: true, functional: true}",
+        ),
+    )
+    r = ingest_specs(
+        e,
+        "a",
+        "a",
+        lambda s: [
+            cand(s, "鈴木", "leads", "Acme社", valid_from="2024-01-01"),
+            cand(s, "鈴木", "works_for", "Beta社", valid_from="2024-01-01"),
+        ],
+    )
+    assert len(r.accepted) == 1 and len(r.pending) == 1
+    assert all(c.ok for c in checks(e.store))  # no second works_for is derived
