@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Literal
 
 from kge.clock import Clock
-from kge.extract import ExtractionFailed, Extractor
+from kge.extract import ExtractionFailed, Extractor, extraction_stream
 from kge.models import (
     Candidate,
     CandidateState,
@@ -130,7 +130,7 @@ class Engine:
         """Candidates from earlier versions of a source that still stand."""
         live: dict[tuple[str, ...], StagedCandidate] = {}
         for sc in self.store.candidates(source_id=source_id):
-            if sc.candidate.extracted_by != extracted_by:
+            if extraction_stream(sc.candidate.extracted_by) != extraction_stream(extracted_by):
                 continue
             if sc.state is CandidateState.PENDING:
                 live[sc.candidate.key()] = sc

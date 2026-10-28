@@ -416,3 +416,33 @@ def test_inverse_rule_ids_are_unambiguous() -> None:
     ids = [r.id for r in onto.axiom_rules()]
     assert len(ids) == len(set(ids))
     assert onto.rule("AX_inverse_c").if_ == ["?x a_b ?y"]  # type: ignore[union-attr]
+
+
+def test_qa_cardinality_counts_only_values_holding_together() -> None:
+    import datetime as dt
+
+    from kge.models import Assertion
+    from kge.qa import cardinality_violations
+
+    onto = _load(
+        """
+        entity_types:
+          T: {}
+        predicates:
+          p: {domain: T, range: "xsd:string", temporal: true, max_cardinality: 1}
+        """
+    )
+
+    def a(i: int, v: str, f: dt.date, t: dt.date | None) -> Assertion:
+        return Assertion.model_construct(
+            id=f"A{i}", subject="E1", predicate="p", object_value=v, valid_from=f, valid_to=t
+        )
+
+    d = dt.date
+    group = [
+        a(1, "a", d(2020, 1, 1), d(2020, 6, 1)),
+        a(2, "b", d(2020, 5, 1), d(2020, 12, 1)),
+        a(3, "c", d(2021, 1, 1), None),  # never together with a or b
+        *(a(10 + i, "c", d(2021, 1, 2) + dt.timedelta(days=i), None) for i in range(300)),
+    ]
+    assert sorted(cardinality_violations(onto, group)) == ["A1", "A2"]
