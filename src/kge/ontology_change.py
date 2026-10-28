@@ -8,6 +8,7 @@ changeset (retractions with reasons), so ``diff``, ``impact`` and as-of queries 
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -168,7 +169,8 @@ def _prospective_conflicts(engine: Engine, new: Ontology, retractions: list[Retr
     """Cardinality violations once the migration has run, including values the new rules
     would derive. Simulated inside a savepoint that is always rolled back."""
     store = engine.store
-    saved = store.ontology, store.pending_ontology, store.loaded_version
+    saved = store.ontology, store.pending_ontology, store.loaded_version, store.clock
+    store.clock = copy.deepcopy(store.clock)  # a fixed clock must not advance for a preview
     before = {a.id for a in store.active(include_hypotheses=True)}
     with store.transaction() as c:
         c.execute("SAVEPOINT ontology_preview")
@@ -191,7 +193,7 @@ def _prospective_conflicts(engine: Engine, new: Ontology, retractions: list[Retr
         finally:
             c.execute("ROLLBACK TO ontology_preview")
             c.execute("RELEASE ontology_preview")
-            store.ontology, store.pending_ontology, store.loaded_version = saved
+            store.ontology, store.pending_ontology, store.loaded_version, store.clock = saved
 
 
 @dataclass

@@ -358,3 +358,15 @@ def test_engine_with_a_superseded_ontology_cannot_write(tmp_path: Path) -> None:
             lambda s: [cand(s, "Beta社", "founded_in", "2001", datatype="xsd:gYear")],
         )
     assert a.store.active(predicate="founded_in") == []
+
+
+def test_plan_does_not_advance_the_fixed_clock(engine) -> None:  # type: ignore[no-untyped-def]
+    bootstrap(engine)
+
+    def add_head(d):  # type: ignore[no-untyped-def]
+        d["predicates"]["head"] = {"domain": "Organization", "range": "Person"}
+        d["rules"].append({"id": "R_head", "if": ["?o employs ?p"], "then": "?o head ?p"})
+
+    before = engine.store.clock.now()
+    ontology_change.plan(engine, _variant(add_head))
+    assert (engine.store.clock.now() - before).total_seconds() == 1  # one tick: our own call

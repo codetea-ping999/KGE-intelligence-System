@@ -175,7 +175,7 @@ def test_inverse_is_derived_with_justification_and_retracted_with_premise(engine
     inv = employs[("Acme社", "田中アリス")]
     assert inv.epistemic_type is EpistemicType.INFERENCE
     assert inv.justification is not None
-    assert inv.justification.rule_id == "AX_inverse_employs"
+    assert inv.justification.rule_id == "AX_inverse_works_for_employs"
     [premise_id] = inv.justification.premise_ids
     premise = engine.store.get_assertion(premise_id)
     assert premise is not None and premise.predicate == "works_for"
@@ -362,7 +362,7 @@ def test_ontology_cli(capsys) -> None:  # type: ignore[no-untyped-def]
     assert main(["ontology"]) == 0
     out = capsys.readouterr().out
     assert "    Company" in out  # indented under Organization
-    assert "AX_inverse_employs (axiom:inverse_of)" in out
+    assert "AX_inverse_works_for_employs (axiom:inverse_of)" in out
 
 
 def test_conflicting_subtypes_in_one_batch_reject_only_the_offender(engine) -> None:  # type: ignore[no-untyped-def]
@@ -401,21 +401,19 @@ def test_sub_property_before_its_functional_parent_in_one_batch(tmp_path: Path) 
     assert all(c.ok for c in checks(e.store))  # no second works_for is derived
 
 
-def test_inverse_rule_ids_are_unambiguous() -> None:
-    onto = _load(
-        """
-        entity_types:
-          T: {}
-        predicates:
-          a: {domain: T, range: T}
-          a_b: {domain: T, range: T}
-          c: {domain: T, range: T, inverse_of: a_b}
-          b_c: {domain: T, range: T, inverse_of: a}
-        """
-    )
-    ids = [r.id for r in onto.axiom_rules()]
-    assert len(ids) == len(set(ids))
-    assert onto.rule("AX_inverse_c").if_ == ["?x a_b ?y"]  # type: ignore[union-attr]
+def test_ambiguous_axiom_rule_ids_are_refused() -> None:
+    with pytest.raises(ValueError, match="ambiguous"):
+        _load(
+            """
+            entity_types:
+              T: {}
+            predicates:
+              a: {domain: T, range: T}
+              a_b: {domain: T, range: T}
+              c: {domain: T, range: T, inverse_of: a_b}
+              b_c: {domain: T, range: T, inverse_of: a}
+            """
+        )
 
 
 def test_qa_cardinality_counts_only_values_holding_together() -> None:

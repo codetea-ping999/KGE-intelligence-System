@@ -124,10 +124,10 @@
     "confidence": 0.7,
     "valid_from": "2023-01-01",
     "valid_to": null,
-    "extracted_by": "reasoner:AX_inverse_employs",
+    "extracted_by": "reasoner:AX_inverse_works_for_employs",
     "approved_by": "policy:reasoner",
     "evidence": 0,
-    "rule": "AX_inverse_employs"
+    "rule": "AX_inverse_works_for_employs"
   },
   {
     "subject": "佐藤ボブ",
@@ -189,10 +189,10 @@
     "confidence": 0.95,
     "valid_from": "2020-01-01",
     "valid_to": "2022-12-31",
-    "extracted_by": "reasoner:AX_inverse_employs",
+    "extracted_by": "reasoner:AX_inverse_works_for_employs",
     "approved_by": "policy:reasoner",
     "evidence": 0,
-    "rule": "AX_inverse_employs"
+    "rule": "AX_inverse_works_for_employs"
   },
   {
     "subject": "Acme社",
@@ -202,9 +202,9 @@
     "confidence": 0.95,
     "valid_from": "2019-04-01",
     "valid_to": null,
-    "extracted_by": "reasoner:AX_inverse_employs",
+    "extracted_by": "reasoner:AX_inverse_works_for_employs",
     "approved_by": "policy:reasoner",
     "evidence": 0,
-    "rule": "AX_inverse_employs"
+    "rule": "AX_inverse_works_for_employs"
   }
 ]
