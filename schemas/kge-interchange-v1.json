@@ -1,0 +1,1171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kge.invalid/schemas/kge.interchange/v1.json",
+  "title": "Doc",
+  "discriminator": {
+    "mapping": {
+      "audit_log": "#/$defs/AuditDoc",
+      "candidates": "#/$defs/CandidatesDoc",
+      "diff": "#/$defs/DiffDoc",
+      "knowledge": "#/$defs/KnowledgeDoc",
+      "submission": "#/$defs/Submission"
+    },
+    "propertyName": "kind"
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/Submission"
+    },
+    {
+      "$ref": "#/$defs/KnowledgeDoc"
+    },
+    {
+      "$ref": "#/$defs/CandidatesDoc"
+    },
+    {
+      "$ref": "#/$defs/DiffDoc"
+    },
+    {
+      "$ref": "#/$defs/AuditDoc"
+    }
+  ],
+  "$defs": {
+    "AssertionRecord": {
+      "additionalProperties": false,
+      "description": "An assertion with the labels of its entities, so readers need no second lookup.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "subject": {
+          "title": "Subject",
+          "type": "string"
+        },
+        "predicate": {
+          "title": "Predicate",
+          "type": "string"
+        },
+        "object_value": {
+          "title": "Object Value",
+          "type": "string"
+        },
+        "object_kind": {
+          "enum": [
+            "entity",
+            "literal"
+          ],
+          "title": "Object Kind",
+          "type": "string"
+        },
+        "object_datatype": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Object Datatype"
+        },
+        "epistemic_type": {
+          "$ref": "#/$defs/EpistemicType"
+        },
+        "status": {
+          "$ref": "#/$defs/Status"
+        },
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "confidence_method": {
+          "title": "Confidence Method",
+          "type": "string"
+        },
+        "valid_from": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Valid From"
+        },
+        "valid_to": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Valid To"
+        },
+        "recorded_at": {
+          "format": "date-time",
+          "title": "Recorded At",
+          "type": "string"
+        },
+        "superseded_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Superseded At"
+        },
+        "extracted_by": {
+          "title": "Extracted By",
+          "type": "string"
+        },
+        "approved_by": {
+          "title": "Approved By",
+          "type": "string"
+        },
+        "candidate_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Candidate Id"
+        },
+        "changeset": {
+          "title": "Changeset",
+          "type": "integer"
+        },
+        "evidence": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "justification": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Justification"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "subject_label": {
+          "title": "Subject Label",
+          "type": "string"
+        },
+        "object_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Object Label"
+        }
+      },
+      "required": [
+        "id",
+        "subject",
+        "predicate",
+        "object_value",
+        "object_kind",
+        "epistemic_type",
+        "status",
+        "confidence",
+        "confidence_method",
+        "recorded_at",
+        "extracted_by",
+        "approved_by",
+        "changeset",
+        "subject_label"
+      ],
+      "title": "AssertionRecord",
+      "type": "object"
+    },
+    "AuditDoc": {
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "const": "kge.interchange",
+          "default": "kge.interchange",
+          "title": "Schema",
+          "type": "string"
+        },
+        "version": {
+          "const": 1,
+          "default": 1,
+          "title": "Version",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "audit_log",
+          "default": "audit_log",
+          "title": "Kind",
+          "type": "string"
+        },
+        "verified": {
+          "title": "Verified",
+          "type": "boolean"
+        },
+        "verify_message": {
+          "title": "Verify Message",
+          "type": "string"
+        },
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/AuditEntry"
+          },
+          "title": "Entries",
+          "type": "array"
+        }
+      },
+      "required": [
+        "verified",
+        "verify_message",
+        "entries"
+      ],
+      "title": "AuditDoc",
+      "type": "object"
+    },
+    "AuditEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "seq": {
+          "title": "Seq",
+          "type": "integer"
+        },
+        "at": {
+          "title": "At",
+          "type": "string"
+        },
+        "actor": {
+          "title": "Actor",
+          "type": "string"
+        },
+        "action": {
+          "title": "Action",
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": true,
+          "title": "Payload",
+          "type": "object"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "actor",
+        "action",
+        "payload"
+      ],
+      "title": "AuditEntry",
+      "type": "object"
+    },
+    "Candidate": {
+      "additionalProperties": false,
+      "description": "What an extractor proposes. Never knowledge until reviewed and committed.",
+      "properties": {
+        "subject": {
+          "$ref": "#/$defs/EntityRef"
+        },
+        "predicate": {
+          "title": "Predicate",
+          "type": "string"
+        },
+        "object": {
+          "discriminator": {
+            "mapping": {
+              "entity": "#/$defs/EntityRef",
+              "literal": "#/$defs/LiteralValue"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/EntityRef"
+            },
+            {
+              "$ref": "#/$defs/LiteralValue"
+            }
+          ],
+          "title": "Object"
+        },
+        "epistemic_type": {
+          "$ref": "#/$defs/EpistemicType",
+          "default": "fact"
+        },
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "confidence_method": {
+          "title": "Confidence Method",
+          "type": "string"
+        },
+        "valid_from": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Valid From"
+        },
+        "valid_to": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Valid To"
+        },
+        "evidence": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "extracted_by": {
+          "title": "Extracted By",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subject",
+        "predicate",
+        "object",
+        "confidence",
+        "confidence_method",
+        "extracted_by"
+      ],
+      "title": "Candidate",
+      "type": "object"
+    },
+    "CandidateState": {
+      "enum": [
+        "pending",
+        "accepted",
+        "rejected",
+        "obsolete"
+      ],
+      "title": "CandidateState",
+      "type": "string"
+    },
+    "CandidatesDoc": {
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "const": "kge.interchange",
+          "default": "kge.interchange",
+          "title": "Schema",
+          "type": "string"
+        },
+        "version": {
+          "const": 1,
+          "default": 1,
+          "title": "Version",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "candidates",
+          "default": "candidates",
+          "title": "Kind",
+          "type": "string"
+        },
+        "head_changeset": {
+          "title": "Head Changeset",
+          "type": "integer"
+        },
+        "state": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "State"
+        },
+        "candidates": {
+          "items": {
+            "$ref": "#/$defs/StagedCandidate"
+          },
+          "title": "Candidates",
+          "type": "array"
+        }
+      },
+      "required": [
+        "head_changeset",
+        "state",
+        "candidates"
+      ],
+      "title": "CandidatesDoc",
+      "type": "object"
+    },
+    "DiffDoc": {
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "const": "kge.interchange",
+          "default": "kge.interchange",
+          "title": "Schema",
+          "type": "string"
+        },
+        "version": {
+          "const": 1,
+          "default": 1,
+          "title": "Version",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "diff",
+          "default": "diff",
+          "title": "Kind",
+          "type": "string"
+        },
+        "base": {
+          "title": "Base",
+          "type": "integer"
+        },
+        "target": {
+          "title": "Target",
+          "type": "integer"
+        },
+        "added": {
+          "items": {
+            "$ref": "#/$defs/AssertionRecord"
+          },
+          "title": "Added",
+          "type": "array"
+        },
+        "removed": {
+          "items": {
+            "$ref": "#/$defs/AssertionRecord"
+          },
+          "title": "Removed",
+          "type": "array"
+        }
+      },
+      "required": [
+        "base",
+        "target",
+        "added",
+        "removed"
+      ],
+      "title": "DiffDoc",
+      "type": "object"
+    },
+    "Entity": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "types": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Types",
+          "type": "array"
+        },
+        "aliases": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Aliases",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "types"
+      ],
+      "title": "Entity",
+      "type": "object"
+    },
+    "EntityRef": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "entity",
+          "default": "entity",
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Type"
+        }
+      },
+      "required": [
+        "label"
+      ],
+      "title": "EntityRef",
+      "type": "object"
+    },
+    "EpistemicType": {
+      "enum": [
+        "fact",
+        "inference",
+        "hypothesis"
+      ],
+      "title": "EpistemicType",
+      "type": "string"
+    },
+    "Evidence": {
+      "additionalProperties": false,
+      "properties": {
+        "source_id": {
+          "title": "Source Id",
+          "type": "string"
+        },
+        "source_version": {
+          "title": "Source Version",
+          "type": "integer"
+        },
+        "quote": {
+          "title": "Quote",
+          "type": "string"
+        },
+        "locator": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locator"
+        }
+      },
+      "required": [
+        "source_id",
+        "source_version",
+        "quote"
+      ],
+      "title": "Evidence",
+      "type": "object"
+    },
+    "Issue": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "related": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Related",
+          "type": "array"
+        }
+      },
+      "required": [
+        "code",
+        "severity",
+        "message"
+      ],
+      "title": "Issue",
+      "type": "object"
+    },
+    "Justification": {
+      "additionalProperties": false,
+      "properties": {
+        "rule_id": {
+          "title": "Rule Id",
+          "type": "string"
+        },
+        "premise_ids": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Premise Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "rule_id",
+        "premise_ids"
+      ],
+      "title": "Justification",
+      "type": "object"
+    },
+    "KnowledgeDoc": {
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "const": "kge.interchange",
+          "default": "kge.interchange",
+          "title": "Schema",
+          "type": "string"
+        },
+        "version": {
+          "const": 1,
+          "default": 1,
+          "title": "Version",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "knowledge",
+          "default": "knowledge",
+          "title": "Kind",
+          "type": "string"
+        },
+        "head_changeset": {
+          "title": "Head Changeset",
+          "type": "integer"
+        },
+        "as_of_changeset": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "As Of Changeset"
+        },
+        "as_of": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "As Of"
+        },
+        "include_hypotheses": {
+          "title": "Include Hypotheses",
+          "type": "boolean"
+        },
+        "assertions": {
+          "items": {
+            "$ref": "#/$defs/AssertionRecord"
+          },
+          "title": "Assertions",
+          "type": "array"
+        },
+        "entities": {
+          "items": {
+            "$ref": "#/$defs/Entity"
+          },
+          "title": "Entities",
+          "type": "array"
+        }
+      },
+      "required": [
+        "head_changeset",
+        "include_hypotheses",
+        "assertions",
+        "entities"
+      ],
+      "title": "KnowledgeDoc",
+      "type": "object"
+    },
+    "LiteralValue": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "literal",
+          "default": "literal",
+          "title": "Kind",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "string"
+        },
+        "datatype": {
+          "title": "Datatype",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "datatype"
+      ],
+      "title": "LiteralValue",
+      "type": "object"
+    },
+    "Severity": {
+      "enum": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "title": "Severity",
+      "type": "integer"
+    },
+    "StagedCandidate": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "batch_id": {
+          "title": "Batch Id",
+          "type": "string"
+        },
+        "source_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Source Id"
+        },
+        "source_version": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Source Version"
+        },
+        "candidate": {
+          "$ref": "#/$defs/Candidate"
+        },
+        "state": {
+          "$ref": "#/$defs/CandidateState"
+        },
+        "report": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ValidationReport"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "decided_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Decided By"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "decided_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Decided At"
+        },
+        "assertion_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Assertion Id"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "batch_id",
+        "source_id",
+        "source_version",
+        "candidate",
+        "state",
+        "created_at"
+      ],
+      "title": "StagedCandidate",
+      "type": "object"
+    },
+    "Status": {
+      "description": "Lifecycle of committed knowledge. Candidates live in staging, not here.",
+      "enum": [
+        "accepted",
+        "retracted",
+        "superseded"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "Submission": {
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "const": "kge.interchange",
+          "default": "kge.interchange",
+          "title": "Schema",
+          "type": "string"
+        },
+        "version": {
+          "const": 1,
+          "default": 1,
+          "title": "Version",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "submission",
+          "default": "submission",
+          "title": "Kind",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/SubmittedSource"
+        },
+        "statements": {
+          "items": {
+            "$ref": "#/$defs/SubmittedStatement"
+          },
+          "title": "Statements",
+          "type": "array"
+        }
+      },
+      "required": [
+        "source",
+        "statements"
+      ],
+      "title": "Submission",
+      "type": "object"
+    },
+    "SubmittedSource": {
+      "additionalProperties": false,
+      "properties": {
+        "uri": {
+          "description": "stable identity; resubmitting it is a diff",
+          "minLength": 1,
+          "title": "Uri",
+          "type": "string"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        },
+        "kind": {
+          "default": "document",
+          "description": "'llm' if the text itself was generated by a model",
+          "enum": [
+            "document",
+            "dataset",
+            "llm"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "content": {
+          "description": "the text that quotes are checked against",
+          "title": "Content",
+          "type": "string"
+        }
+      },
+      "required": [
+        "uri",
+        "content"
+      ],
+      "title": "SubmittedSource",
+      "type": "object"
+    },
+    "SubmittedStatement": {
+      "additionalProperties": false,
+      "properties": {
+        "subject": {
+          "minLength": 1,
+          "title": "Subject",
+          "type": "string"
+        },
+        "subject_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Subject Type"
+        },
+        "predicate": {
+          "minLength": 1,
+          "title": "Predicate",
+          "type": "string"
+        },
+        "object": {
+          "minLength": 1,
+          "title": "Object",
+          "type": "string"
+        },
+        "object_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "entity type, for an entity object",
+          "title": "Object Type"
+        },
+        "object_datatype": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "xsd datatype, for a literal object",
+          "title": "Object Datatype"
+        },
+        "epistemic_type": {
+          "default": "fact",
+          "enum": [
+            "fact",
+            "hypothesis"
+          ],
+          "title": "Epistemic Type",
+          "type": "string"
+        },
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "quote": {
+          "default": "",
+          "description": "verbatim quote from source.content; facts need one",
+          "title": "Quote",
+          "type": "string"
+        },
+        "locator": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locator"
+        },
+        "valid_from": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Valid From"
+        },
+        "valid_to": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Valid To"
+        }
+      },
+      "required": [
+        "subject",
+        "predicate",
+        "object",
+        "confidence"
+      ],
+      "title": "SubmittedStatement",
+      "type": "object"
+    },
+    "ValidationReport": {
+      "additionalProperties": false,
+      "properties": {
+        "issues": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Issue"
+          },
+          "title": "Issues",
+          "type": "array"
+        },
+        "effective_type": {
+          "$ref": "#/$defs/EpistemicType"
+        },
+        "effective_confidence": {
+          "title": "Effective Confidence",
+          "type": "number"
+        },
+        "duplicate_of": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duplicate Of"
+        },
+        "conflicts_with": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Conflicts With",
+          "type": "array"
+        },
+        "supersedes": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Supersedes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "effective_type",
+        "effective_confidence"
+      ],
+      "title": "ValidationReport",
+      "type": "object"
+    }
+  }
+}

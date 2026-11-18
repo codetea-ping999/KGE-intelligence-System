@@ -129,6 +129,77 @@ uv run kge ingest fixtures/docs/news_2026.txt --extractor llm --llm claude --rec
 - `--record` を付けると応答を `fixtures/llm/` に保存し、以後は `--llm replay`（既定）でネットワークなしに同じ結果を再現できます。
 - 呼び出しが失敗した場合（認証情報なし、通信エラー、拒否、出力の打ち切り）は、その取り込み全体を取り消し、`ingest_failed` を監査ログに残します。再実行すれば通常どおり処理されます。
 
+## 他のシステムへの組み込み
+
+KGE は Python ライブラリとしても、JSON を話すコマンドとしても組み込めます。どの入口から入った知識も、同じ検証・レビュー・監査を通ります。
+
+### Python から
+
+公開 API は `kge.KnowledgeGraph` と、交換形式 `kge.interchange` です（それ以外のモジュールは内部実装で、版の間で変わることがあります）。
+
+```python
+from kge import KnowledgeGraph
+
+with KnowledgeGraph.open("build/app.db", ontology="ontology/base.yaml") as kg:
+    # 他システム（ここでは CRM の LLM 抽出）が見つけた記述を候補として渡す
+    result = kg.submit(
+        {
+            "schema": "kge.interchange", "version": 1, "kind": "submission",
+            "source": {"uri": "crm:note/42", "content": "田中アリスはAcme社に勤務している。"},
+            "statements": [{
+                "subject": "田中アリス", "subject_type": "Person",
+                "predicate": "works_for", "object": "Acme社", "object_type": "Organization",
+                "confidence": 0.9, "quote": "田中アリスはAcme社に勤務している。",
+            }],
+        },
+        system="crm",          # 提出元の名前（英数字と . _ -）
+        origin="llm",          # 既定値。LLM 由来は必ず人のレビュー待ちになる
+    )
+    for c in kg.candidates():                       # レビュー画面などに表示
+        kg.accept(c.id, reviewer="human:sato", reason="CRM の原文で確認")
+
+    rows = kg.query(predicate="works_for")          # 確定知識（as_of_changeset / as_of で過去も）
+    print(kg.export_knowledge().to_json())          # 版つき JSON で出力
+```
+
+主なメソッド: `ingest_text`（組み込みの抽出器か独自の `Extractor`）、`submit`、`candidates` / `candidate`、`accept` / `reject`、`query` / `history` / `impact` / `retract`、`verify_audit` / `quality`、`export_knowledge` / `export_candidates` / `export_diff` / `export_audit`。
+例外は `kge` から import できます（`ReviewError`、`UnauthorizedCommit`、`OntologyMismatch`、`InterchangeError` など）。
+
+### 提出（submission）と LLM 出力の隔離
+
+- 提出された記述は確定知識に直接入らず、候補として検証されます。同じ `source.uri` で再提出すると差分だけが反映されます。
+- `origin="llm"`（既定）の候補は自動承認されず、`human:<名前>` の承認が必要です。引用が原文に見つからない「事実」は仮説に格下げされ、信頼度は 0.7 で頭打ちです。
+- `origin="deterministic"` はルールや整備済みデータ向けです。検証を通った候補だけが自動承認され、事実には原文で確認できる引用が必要です。
+- 抽出者の名前（`llm:external/<system>` / `external:<system>`）は KGE が付けます。提出文書で `extracted_by` を指定したり、`human:` を名乗ったり、推論（inference）を提出したりはできません。
+
+### コマンドから（JSON）
+
+`--json` を付けると、どのコマンドも標準出力に JSON を1つだけ出します（`kge --json query` と `kge query --json` は同じ）。
+
+```bash
+uv run kge submit note42.json --system crm --json        # '-' で標準入力から
+uv run kge candidates --json                              # レビュー待ち（kind: candidates）
+uv run kge accept C0001 --reviewer human:sato --reason "原文で確認" --json
+uv run kge query --json                                   # 確定知識（kind: knowledge）
+uv run kge diff 3 9 --json                                # 差分（kind: diff）
+uv run kge audit log --json                               # 監査ログと改ざん検査（kind: audit_log）
+uv run kge export --out build/kge.json                    # 全知識を交換形式で（以前の形は --format snapshot）
+uv run kge schema > kge-interchange-v1.json               # 交換形式の JSON Schema
+```
+
+| 終了コード | 意味 |
+|---|---|
+| 0 | 成功 |
+| 1 | 検査が不合格、または対象が見つからない（`qa`、`audit verify`、`show`） |
+| 2 | 要求が拒否された、または入力が不正（レビューの規則違反、オントロジーの不一致、読めないファイル、引数の誤り） |
+
+エラーは標準エラー出力に出ます。`--json` のときは `{"error": {"type": "...", "message": "..."}}` の形です。
+
+### 交換形式
+
+すべての文書は `{"schema": "kge.interchange", "version": 1, "kind": ...}` を持ちます。`kind` は `submission`（読み込み用）と、`knowledge`・`candidates`・`diff`・`audit_log`（出力用）です。
+JSON Schema は [`schemas/kge-interchange-v1.json`](schemas/kge-interchange-v1.json) にあり、テストで実装と一致することを確認しています。既存の読み手を壊す変更をするときは `version` を上げます。対応していない版の文書は、理由を示して拒否します。
+
 ## 受け入れ基準とテストの対応
 
 | AC | 内容 | テスト |
@@ -147,6 +218,7 @@ uv run kge ingest fixtures/docs/news_2026.txt --extractor llm --llm claude --rec
 | フェーズ7a | クラス階層、プロパティ特性、カーディナリティ、OWL 出力 | `tests/test_ontology_semantics.py` |
 | フェーズ7b | オントロジーの版管理、影響分析、承認つきの移行 | `tests/test_ontology_versioning.py` |
 | フェーズ8 | 実データ取り込み（法人番号 CSV、Wikidata） | `tests/test_jp_companies.py` |
+| 組み込み | 公開 API、交換形式、提出経路での LLM 出力の隔離、CLI の JSON 出力と終了コード | `tests/test_embedding_api.py` |
 
 ## 構成
 
