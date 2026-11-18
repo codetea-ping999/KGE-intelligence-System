@@ -174,6 +174,15 @@ class _LLMItem(BaseModel):
     valid_to: dt.date | None = None
 
 
+def extraction_stream(extracted_by: str) -> str:
+    """What incremental updates compare when deciding which earlier candidates a new
+    extraction replaces: the extractor and its prompt, not the model that happened to
+    answer (a fallback model must not make every earlier statement look unrelated)."""
+    if extracted_by.startswith("llm:") and "@" in extracted_by:
+        return "llm@" + extracted_by.rsplit("@", 1)[1]
+    return extracted_by
+
+
 class LLMExtractor:
     def __init__(self, client: LLMClient, ontology: Ontology) -> None:
         self.client = client

@@ -232,3 +232,62 @@ def test_restatement_with_a_new_epistemic_type_is_restaged(engine) -> None:  # t
     r = ingest_specs(engine, "memo", "Acme社は日本にある。\n確認済み\n", build(EpistemicType.FACT))
     assert r.unchanged == 0 and len(r.obsolete) == 1
     assert [a.epistemic_type for a in _located(engine)] == [EpistemicType.FACT]
+
+
+def test_one_term_cannot_be_two_disjoint_types(engine) -> None:  # type: ignore[no-untyped-def]
+    r = engine.ingest("doc", "XはXに勤務している。\nAcme社は日本に所在する。\n", rule(engine))
+    assert len(r.accepted) == 1 and len(r.rejected) == 1  # the valid line is kept
+    [bad] = [engine.store.get_candidate(c) for c in r.rejected]
+    assert bad is not None and "TYPE_DISJOINT" in bad.report.codes()  # type: ignore[union-attr]
+
+
+def test_valid_restatement_after_a_rejected_one_is_kept(engine) -> None:  # type: ignore[no-untyped-def]
+    r = ingest_specs(
+        engine,
+        "x",
+        "Acme社は日本に所在する。",
+        lambda s: [
+            cand(s, "Acme社", "located_in", "日本", quote="本文にない引用"),  # rejected
+            cand(s, "Acme社", "located_in", "日本"),
+        ],
+    )
+    assert len(r.rejected) == 1 and len(r.accepted) == 1 and r.unchanged == 0
+    assert len(_located(engine)) == 1
+
+
+class _ScriptedLLM:
+    """Answers with the given located_in statements, as the given serving model."""
+
+    def __init__(self) -> None:
+        self.model = ""
+        self.answer: list[tuple[str, str]] = []
+
+    def complete(self, prompt: str) -> str:
+        import json
+
+        items = [
+            {"subject": s, "predicate": "located_in", "object": o, "epistemic_type": "fact",
+             "confidence": 0.6, "quote": f"{s}は{o}に所在する。"}
+            for s, o in self.answer
+        ]  # fmt: skip
+        return json.dumps({"assertions": items}, ensure_ascii=False)
+
+
+def test_model_fallback_does_not_break_incremental_updates(engine) -> None:  # type: ignore[no-untyped-def]
+    from kge.extract import LLMExtractor
+    from kge.models import CandidateState
+
+    client = _ScriptedLLM()
+    client.model, client.answer = "model-a", [("Acme社", "日本"), ("Beta社", "ドイツ")]
+    r1 = engine.ingest(
+        "doc",
+        "Acme社は日本に所在する。\nBeta社はドイツに所在する。\n",
+        LLMExtractor(client, engine.ontology),
+    )
+    assert len(r1.pending) == 2
+    client.model, client.answer = "model-b", [("Acme社", "日本")]  # a fallback model answers
+    r2 = engine.ingest("doc", "Acme社は日本に所在する。\n", LLMExtractor(client, engine.ontology))
+    assert len(r2.obsolete) == 1 and r2.unchanged == 1  # Beta社 was withdrawn, Acme社 kept
+    pending = engine.store.candidates(state=CandidateState.PENDING)
+    assert [sc.candidate.subject.label for sc in pending] == ["Acme社"]
+    assert pending[0].candidate.extracted_by.startswith("llm:model-a@")  # provenance kept

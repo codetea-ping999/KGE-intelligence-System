@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Literal
 
 from kge.clock import Clock
-from kge.extract import ExtractionFailed, Extractor
+from kge.extract import ExtractionFailed, Extractor, extraction_stream
 from kge.models import (
     Candidate,
     CandidateState,
@@ -130,7 +130,7 @@ class Engine:
         """Candidates from earlier versions of a source that still stand."""
         live: dict[tuple[str, ...], StagedCandidate] = {}
         for sc in self.store.candidates(source_id=source_id):
-            if sc.candidate.extracted_by != extracted_by:
+            if extraction_stream(sc.candidate.extracted_by) != extraction_stream(extracted_by):
                 continue
             if sc.state is CandidateState.PENDING:
                 live[sc.candidate.key()] = sc
@@ -228,12 +228,13 @@ class Engine:
             if cand.key() in kept or cand.key() in seen:
                 result.unchanged += 1  # already known, or stated twice in this version
                 continue
-            seen.add(cand.key())
             cid = self.store.stage(cand, f"{src.id}v{src.version}", src, extraction.raw_output)
             result.staged.append(cid)
             report = self.validator.validate(cand, batch, excluded)
             self.store.set_report(cid, report)
             decision, why = auto_policy(cand.extracted_by, report)
+            if decision != "reject":
+                seen.add(cand.key())  # a rejected one must not hide a valid restatement
             if decision == "accept":
                 batch.append(cand)  # later candidates are checked against what gets committed
             if decision == "reject":

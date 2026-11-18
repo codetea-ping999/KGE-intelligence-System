@@ -145,7 +145,10 @@ class Ontology(BaseModel):
                     raise ValueError(f"rule {r.id}: unknown predicate {pred}")
         for r in self.axiom_rules():
             if r.id in ids:
-                raise ValueError(f"rule id {r.id} is reserved for a property axiom")
+                # also catches two axioms with one name ("a_b"+"c" and "a"+"b_c"); refusing
+                # them keeps the rule ids already recorded in justifications valid
+                raise ValueError(f"rule id {r.id} is ambiguous or reserved for a property axiom")
+            ids.add(r.id)
         return self
 
     # -------------------------------------------------------------- class hierarchy
