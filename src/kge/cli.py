@@ -1,8 +1,15 @@
-"""Command line interface: `kge <command>`. Run `kge -h` for the list of commands."""
+"""Command line interface: `kge <command>`. Run `kge -h` for the list of commands.
+
+``kge --json <command>`` prints one JSON document on stdout instead of text, for use from
+other programs. Exit codes: 0 success; 1 a check failed or the item was not found (qa,
+audit verify, show); 2 the request was refused or invalid (review rules, ontology mismatch,
+bad input files, usage errors). Errors go to stderr, as ``{"error": {...}}`` with --json.
+"""
 
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import datetime as dt
 import json
 import os
@@ -10,7 +17,9 @@ import sys
 import tempfile
 from pathlib import Path
 
-from kge import audit, demo, ontology_change, qa
+from pydantic import BaseModel
+
+from kge import audit, demo, interchange, ontology_change, qa
 from kge.clock import clock_from_env
 from kge.export import DEFAULT_BASE, to_turtle
 from kge.extract import (
@@ -39,8 +48,26 @@ def _fmt(e: Engine, a: Assertion) -> str:
     return demo._fmt(e, a) + f" [{a.status.value}]"
 
 
+def _jsonable(obj: object) -> object:
+    if isinstance(obj, BaseModel):
+        return obj.model_dump(mode="json", by_alias=True)
+    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+        return {f.name: getattr(obj, f.name) for f in dataclasses.fields(obj)}
+    if isinstance(obj, dt.date | dt.datetime):
+        return obj.isoformat()
+    return str(obj)
+
+
 def _print_json(obj: object) -> None:
-    print(json.dumps(obj, ensure_ascii=False, indent=2, default=str))
+    print(json.dumps(obj, ensure_ascii=False, indent=2, default=_jsonable))
+
+
+def _emit(args: argparse.Namespace, data: object, text: str | None = None) -> None:
+    """Print ``data`` as JSON with --json, otherwise ``text`` (if any)."""
+    if args.json:
+        _print_json(data)
+    elif text is not None:
+        print(text)
 
 
 def cmd_ingest(args: argparse.Namespace) -> int:
@@ -61,7 +88,7 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         extractor = LLMExtractor(client, e.ontology)
     path = Path(args.path)
     r = e.ingest(args.uri or path.as_posix(), path.read_text(encoding="utf-8"), extractor)
-    print(demo._summary(r))
+    _emit(args, r, demo._summary(r))
     return 0
 
 
@@ -83,15 +110,30 @@ def cmd_import(args: argparse.Namespace) -> int:
     try:
         content = wikidata.convert(raw) if args.dataset == "wikidata" else houjin.convert(raw)
     except houjin.MalformedCSV as exc:
-        print(f"error: nothing imported, {path} has unreadable rows: {exc}", file=sys.stderr)
-        return 2
+        raise InputError(f"nothing imported, {path} has unreadable rows: {exc}") from exc
     ident, prior, title = IMPORTERS[args.dataset]
     if args.canonical_out:
         Path(args.canonical_out).write_text(content, encoding="utf-8")
     extractor = DatasetExtractor(e.ontology, e.store, ident, prior)
     uri = args.uri or f"{args.dataset}:{path.name}"
     r = e.ingest(uri, content, extractor, title=title, kind=SourceKind.DATASET)
-    print(demo._summary(r))
+    _emit(args, r, demo._summary(r))
+    return 0
+
+
+def cmd_submit(args: argparse.Namespace) -> int:
+    """Stage statements from another system (interchange 'submission' JSON)."""
+    from kge.api import KnowledgeGraph
+
+    raw = sys.stdin.read() if args.path == "-" else Path(args.path).read_text(encoding="utf-8")
+    kg = KnowledgeGraph(_engine(args))
+    r = kg.submit(raw, system=args.system, origin=args.origin)
+    _emit(args, r, demo._summary(r))
+    return 0
+
+
+def cmd_schema(args: argparse.Namespace) -> int:
+    print(json.dumps(interchange.json_schema(), ensure_ascii=False, indent=2))
     return 0
 
 
@@ -104,13 +146,16 @@ def cmd_fetch(args: argparse.Namespace) -> int:
         e = _engine(args)
         numbers += [a.object_value for a in e.store.active(predicate="corporate_number")]
     Path(args.out).write_text(wikidata.fetch(numbers), encoding="utf-8")
-    print(f"wrote {args.out}")
+    _emit(args, {"wrote": args.out}, f"wrote {args.out}")
     return 0
 
 
 def cmd_candidates(args: argparse.Namespace) -> int:
     e = _engine(args)
     state = CandidateState(args.state) if args.state != "all" else None
+    if args.json:
+        _print_json(interchange.candidates(e.store, state.value if state else None))
+        return 0
     for sc in e.store.candidates(state=state):
         rep = sc.report
         codes = ", ".join(rep.codes()) if rep else "unvalidated"
@@ -124,14 +169,12 @@ def cmd_show(args: argparse.Namespace) -> int:
     if args.id.startswith("C"):
         sc = e.store.get_candidate(args.id)
         if sc is None:
-            print(f"unknown candidate {args.id}", file=sys.stderr)
-            return 1
+            return _not_found(args, f"unknown candidate {args.id}")
         _print_json(sc.model_dump(mode="json"))
     else:
         hist = e.store.history(args.id)
         if not hist:
-            print(f"unknown assertion {args.id}", file=sys.stderr)
-            return 1
+            return _not_found(args, f"unknown assertion {args.id}")
         _print_json([h.model_dump(mode="json") for h in hist])
     return 0
 
@@ -139,31 +182,43 @@ def cmd_show(args: argparse.Namespace) -> int:
 def cmd_accept(args: argparse.Namespace) -> int:
     e = _engine(args)
     results = e.accept(args.id, args.reviewer, args.reason, args.supersede or [])
-    print(f"accepted {args.id}: changesets {[r.changeset for r in results]}")
+    text = f"accepted {args.id}: changesets {[r.changeset for r in results]}"
+    _emit(args, {"accepted": args.id, "commits": results}, text)
     return 0
 
 
 def cmd_reject(args: argparse.Namespace) -> int:
     _engine(args).reject(args.id, args.reviewer, args.reason)
-    print(f"rejected {args.id}")
+    _emit(args, {"rejected": args.id}, f"rejected {args.id}")
     return 0
 
 
 def cmd_query(args: argparse.Namespace) -> int:
     e = _engine(args)
     at = dt.datetime.fromisoformat(args.as_of) if args.as_of else None
-    rows = e.store.snapshot(args.as_of_changeset, at, include_hypotheses=args.hypotheses)
+    rows = [
+        a
+        for a in e.store.snapshot(args.as_of_changeset, at, include_hypotheses=args.hypotheses)
+        if (not args.subject or e.store.label(a.subject) == args.subject)
+        and (not args.predicate or a.predicate == args.predicate)
+    ]
+    if args.json:
+        doc = interchange.knowledge(e.store, args.as_of_changeset, at, args.hypotheses)
+        keep = {a.id for a in rows}
+        doc.assertions = [a for a in doc.assertions if a.id in keep]
+        _print_json(doc)
+        return 0
     for a in rows:
-        if args.subject and e.store.label(a.subject) != args.subject:
-            continue
-        if args.predicate and a.predicate != args.predicate:
-            continue
         print(_fmt(e, a))
     return 0
 
 
 def cmd_log(args: argparse.Namespace) -> int:
-    for cs in _engine(args).store.changesets():
+    changesets = _engine(args).store.changesets()
+    if args.json:
+        _print_json(changesets)
+        return 0
+    for cs in changesets:
         ops = ", ".join(f"{o['op']}:{o['target']}" for o in cs.ops)
         print(f"#{cs.id} {cs.created_at.isoformat()} {cs.author}: {cs.message}\n    {ops}")
     return 0
@@ -171,6 +226,9 @@ def cmd_log(args: argparse.Namespace) -> int:
 
 def cmd_diff(args: argparse.Namespace) -> int:
     e = _engine(args)
+    if args.json:
+        _print_json(interchange.changes(e.store, args.base, args.target))
+        return 0
     d = diff(e.store, args.base, args.target)
     for a in d.removed:
         print("- " + _fmt(e, a))
@@ -182,6 +240,9 @@ def cmd_diff(args: argparse.Namespace) -> int:
 def cmd_impact(args: argparse.Namespace) -> int:
     e = _engine(args)
     rep = e.impact(args.id)
+    if args.json:
+        _print_json(rep)
+        return 0
     for item in rep.dependents:
         a = e.store.get_assertion(item.assertion_id)
         assert a is not None
@@ -192,19 +253,22 @@ def cmd_impact(args: argparse.Namespace) -> int:
 
 def cmd_retract(args: argparse.Namespace) -> int:
     results = _engine(args).retract(args.id, args.reason, args.actor)
-    print(f"retracted {results[0].retracted} in changeset {results[0].changeset}")
+    text = f"retracted {results[0].retracted} in changeset {results[0].changeset}"
+    _emit(args, {"commits": results}, text)
     return 0
 
 
 def cmd_alias(args: argparse.Namespace) -> int:
     _engine(args).merge_alias(args.entity, args.alias, args.reviewer)
-    print(f"added alias {args.alias!r} to {args.entity}")
+    data = {"entity": args.entity, "alias": args.alias}
+    _emit(args, data, f"added alias {args.alias!r} to {args.entity}")
     return 0
 
 
 def cmd_reason(args: argparse.Namespace) -> int:
     results = _engine(args).reasoner.run()
-    print(f"{sum(len(r.created) for r in results)} inferences in {len(results)} changesets")
+    text = f"{sum(len(r.created) for r in results)} inferences in {len(results)} changesets"
+    _emit(args, {"commits": results}, text)
     return 0
 
 
@@ -212,8 +276,11 @@ def cmd_audit(args: argparse.Namespace) -> int:
     e = _engine(args)
     if args.action == "verify":
         v = audit.verify(e.store.conn)
-        print(f"{'OK' if v.ok else 'TAMPERED'}: {v.entries} entries, {v.message}")
+        _emit(args, v, f"{'OK' if v.ok else 'TAMPERED'}: {v.entries} entries, {v.message}")
         return 0 if v.ok else 1
+    if args.json:
+        _print_json(interchange.audit_log(e.store))
+        return 0
     for entry in audit.entries(e.store.conn):
         print(json.dumps(entry, ensure_ascii=False))
     return 0
@@ -237,13 +304,15 @@ def cmd_qa(args: argparse.Namespace) -> int:
         ref_report.checks.append(qa.golden_check(snap, golden))
         reports.append(("reference scenario", ref_report))
         ref.store.close()
-    ok = True
+    ok = all(rep.ok for _, rep in reports)
+    if args.json:
+        _print_json({"ok": ok, "reports": [{"name": n, **vars(r)} for n, r in reports]})
+        return 0 if ok else 1
     for name, rep in reports:
         print(f"## {name}")
         for c in rep.checks:
             print(f"  [{'OK' if c.ok else 'NG'}] {c.name} {c.detail}".rstrip())
         print("  metrics: " + json.dumps(rep.metrics, ensure_ascii=False))
-        ok = ok and rep.ok
     return 0 if ok else 1
 
 
@@ -259,13 +328,16 @@ def cmd_demo(args: argparse.Namespace) -> int:
 def cmd_export(args: argparse.Namespace) -> int:
     store = _engine(args).store
     if args.format == "json":
+        text = interchange.knowledge(store, include_hypotheses=True).to_json()
+    elif args.format == "snapshot":
         text = json.dumps(qa.export_snapshot(store), ensure_ascii=False, indent=2, default=str)
         text += "\n"
     else:
         text = to_turtle(store, base=args.base, include_history=not args.active_only)
     if args.out:
         Path(args.out).write_text(text, encoding="utf-8")
-        print(f"wrote {args.out}")
+        if not args.json:
+            print(f"wrote {args.out}")
     else:
         sys.stdout.write(text)
     return 0
@@ -273,9 +345,17 @@ def cmd_export(args: argparse.Namespace) -> int:
 
 def cmd_ontology(args: argparse.Namespace) -> int:
     if args.action == "show":
-        return _show_ontology(Ontology.load(args.ontology))
+        onto = Ontology.load(args.ontology)
+        if args.json:
+            _print_json({"ontology": onto, "rules": onto.all_rules()})
+            return 0
+        return _show_ontology(onto)
     e = _engine(args, allow_ontology_change=True)
     if args.action == "log":
+        if args.json:
+            pending = e.store.pending_ontology is not None
+            _print_json({"versions": e.store.ontology_versions(), "pending_change": pending})
+            return 0
         for v in e.store.ontology_versions():
             print(
                 f"v{v.version}  after changeset {v.after_changeset}  {v.recorded_at.isoformat()}"
@@ -286,21 +366,25 @@ def cmd_ontology(args: argparse.Namespace) -> int:
         return 0
     if args.action == "diff":
         if len(args.versions) != 2:
-            print("error: ontology diff needs two versions, e.g. 'kge ontology diff 1 2'")
-            return 2
+            raise InputError("ontology diff needs two versions, e.g. 'kge ontology diff 1 2'")
         a, b = (e.store.ontology_version(v) for v in args.versions)
-        for c in ontology_change.diff_ontologies(a, b):
-            print(c)
+        changes = ontology_change.diff_ontologies(a, b)
+        _emit(args, changes, "\n".join(str(c) for c in changes) if changes else None)
         return 0
     new = Ontology.load(args.ontology)
     if args.action == "plan":
         p = ontology_change.plan(e, new)
+        if args.json:
+            _print_json({"plan": p, "blocking": p.blocking(retract_invalid=False)})
+            return 0
         _print_plan(e, p)
         return 0
     if not args.actor or not args.reason:
-        print("error: ontology apply needs --actor and --reason")
-        return 2
+        raise InputError("ontology apply needs --actor and --reason")
     r = ontology_change.apply(e, new, args.actor, args.reason, args.retract_invalid)
+    if args.json:
+        _print_json(r)
+        return 0
     _print_plan(e, r.plan)
     print(
         f"applied ontology v{r.version}: retracted {len(r.retracted)}, derived {len(r.derived)},"
@@ -381,6 +465,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="kge", description="Knowledge Graph Engineering PoC")
     p.add_argument("--db", default=os.environ.get("KGE_DB", "build/kge.db"))
     p.add_argument("--ontology", default=os.environ.get("KGE_ONTOLOGY", "ontology/base.yaml"))
+    p.add_argument(
+        "--json", action="store_true", help="print machine-readable JSON instead of text"
+    )
     sub = p.add_subparsers(dest="command", required=True)
 
     s = sub.add_parser("import", help="ingest a structured dataset (Wikidata JSON, 法人番号 CSV)")
@@ -389,6 +476,24 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--uri", help="source identity for incremental re-imports")
     s.add_argument("--canonical-out", help="also write the canonical statements to this file")
     s.set_defaults(func=cmd_import)
+
+    s = sub.add_parser(
+        "submit",
+        help="stage statements from another system (interchange JSON; '-' reads stdin)",
+    )
+    s.add_argument("path")
+    s.add_argument("--system", required=True, help="name of the submitting system")
+    s.add_argument(
+        "--origin",
+        choices=["llm", "deterministic"],
+        default="llm",
+        help="llm (default): always needs human review; deterministic: rule/curated source",
+    )
+    s.set_defaults(func=cmd_submit)
+
+    sub.add_parser("schema", help="print the JSON Schema of the interchange format").set_defaults(
+        func=cmd_schema
+    )
 
     s = sub.add_parser("fetch", help="download Wikidata statements (needs network access)")
     s.add_argument("dataset", choices=["wikidata"])
@@ -501,14 +606,40 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_demo)
 
     s = sub.add_parser("export", help="export knowledge as JSON or RDF Turtle (PROV-O)")
-    s.add_argument("--format", choices=["json", "turtle"], default="json")
+    s.add_argument(
+        "--format",
+        choices=["json", "turtle", "snapshot"],
+        default="json",
+        help="json: versioned interchange document (default); snapshot: id-free golden view",
+    )
     s.add_argument("--base", default=DEFAULT_BASE, help="base IRI for turtle output")
     s.add_argument(
         "--active-only", action="store_true", help="turtle: omit retracted/superseded assertions"
     )
     s.add_argument("--out", help="write to a file instead of stdout")
     s.set_defaults(func=cmd_export)
+    for command in sub.choices.values():  # `kge query --json` works as well as `kge --json query`
+        command.add_argument(
+            "--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS
+        )
     return p
+
+
+class InputError(Exception):
+    """An input file could not be used; nothing was changed."""
+
+
+def _not_found(args: argparse.Namespace, message: str) -> int:
+    _error(args, "NotFound", message)
+    return 1
+
+
+def _error(args: argparse.Namespace, kind: str, message: str) -> None:
+    if getattr(args, "json", False):
+        err = {"error": {"type": kind, "message": message}}
+        print(json.dumps(err, ensure_ascii=False), file=sys.stderr)
+    else:
+        print(f"error: {message}", file=sys.stderr)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -516,6 +647,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return int(args.func(args))
     except (
+        InputError,
+        interchange.InterchangeError,
         ReviewError,
         UnauthorizedCommit,
         OntologyMismatch,
@@ -525,7 +658,7 @@ def main(argv: list[str] | None = None) -> int:
         LLMError,
         OSError,  # unreadable files, unreachable endpoints
     ) as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        _error(args, type(exc).__name__, str(exc))
         return 2
 
 
