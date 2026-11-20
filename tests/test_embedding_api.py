@@ -155,8 +155,10 @@ def test_resubmission_is_incremental(kg: KnowledgeGraph) -> None:
 def test_versioned_envelope_is_checked(kg: KnowledgeGraph) -> None:
     for bad, msg in [
         ("not json", "not JSON"),
+        (b"\xff", "not JSON"),
         ({"schema": "other", "version": 1}, "not a kge.interchange"),
         ({**submission([WORKS]), "version": 2}, "unsupported"),
+        ({**submission([WORKS]), "version": True}, "unsupported"),
     ]:
         with pytest.raises(InterchangeError, match=msg):
             kg.submit(bad, system="crm")  # type: ignore[arg-type]
@@ -241,3 +243,18 @@ def test_cli_json_output_and_exit_codes(
     assert code == 2 and err.startswith("error:")
     code, out, _ = _run(capsys, *base, "--json", "audit", "verify")
     assert code == 0 and json.loads(out)["ok"] is True
+
+
+def test_cli_rejects_binary_submission_without_creating_database(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    submission_path = tmp_path / "bad.json"
+    submission_path.write_bytes(b"\xff")
+    database = tmp_path / "k.db"
+    code, out, err = _run(
+        capsys, "--db", str(database), "--json", "submit", str(submission_path), "--system", "crm"
+    )
+
+    assert code == 2 and out == ""
+    assert json.loads(err)["error"]["type"] == "InterchangeError"
+    assert not database.exists()
