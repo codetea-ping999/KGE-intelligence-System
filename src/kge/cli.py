@@ -125,9 +125,10 @@ def cmd_submit(args: argparse.Namespace) -> int:
     """Stage statements from another system (interchange 'submission' JSON)."""
     from kge.api import KnowledgeGraph
 
-    raw = sys.stdin.read() if args.path == "-" else Path(args.path).read_text(encoding="utf-8")
+    raw = sys.stdin.read() if args.path == "-" else Path(args.path).read_bytes()
+    submission = interchange.parse_submission(raw)
     kg = KnowledgeGraph(_engine(args))
-    r = kg.submit(raw, system=args.system, origin=args.origin)
+    r = kg.submit(submission, system=args.system, origin=args.origin)
     _emit(args, r, demo._summary(r))
     return 0
 

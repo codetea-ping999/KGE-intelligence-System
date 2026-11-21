@@ -185,7 +185,7 @@ def parse(data: str | bytes | dict[str, Any]) -> BaseModel:
         raise InterchangeError("an interchange document is a JSON object")
     if data.get("schema") != SCHEMA:
         raise InterchangeError(f"not a {SCHEMA} document (schema={data.get('schema')!r})")
-    if data.get("version") != VERSION:
+    if isinstance(data.get("version"), bool) or data.get("version") != VERSION:
         raise InterchangeError(
             f"unsupported {SCHEMA} version {data.get('version')!r}; this build reads {VERSION}"
         )
